@@ -242,8 +242,13 @@ public class P2PNode implements AutoCloseable {
         }
 
         P2PNode other = (P2PNode) obj;
-        return this.nodePort == other.nodePort
-                && this.nodeAddress.equals(other.nodeAddress);
+
+        // For node address, consider "localhost" and "127.0.0.1" as equal
+        if ((this.nodeAddress.equals("localhost") && other.nodeAddress.equals("127.0.0.1"))
+            || (this.nodeAddress.equals("127.0.0.1") && other.nodeAddress.equals("localhost"))) {
+            return this.nodePort == other.nodePort;
+        }
+        return this.nodeAddress.equals(other.nodeAddress) && this.nodePort == other.nodePort;
     }
 
     /**
