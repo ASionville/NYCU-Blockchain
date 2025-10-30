@@ -1,6 +1,7 @@
 package p2pblockchain.utils;
 
 import java.util.Base64;
+import java.nio.charset.StandardCharsets;
 
 /**
  * Utility class for Base64 encoding and decoding.
@@ -33,7 +34,7 @@ public class Base64Utils {
      * @return Base64-encoded string
      */
     public static String encodeToString(String data) {
-        return encode(data.getBytes());
+        return encode(data.getBytes(StandardCharsets.UTF_8));
     }
 
     /**
@@ -43,6 +44,6 @@ public class Base64Utils {
      * @return Decoded string
      */
     public static String decodeToString(String base64) {
-        return new String(decode(base64));
+        return new String(decode(base64), StandardCharsets.UTF_8);
     }
 }
