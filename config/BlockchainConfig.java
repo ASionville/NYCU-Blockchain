@@ -10,8 +10,9 @@ public class BlockchainConfig {
     // 0 = None
     // 1 = Errors only
     // 2 = Errors and Warnings
-    // 3 = All logs
-    public static int VERBOSE_LEVEL = 2;
+    // 3 = Errors, Warnings and Info
+    // 4 = Verbose (All logs)
+    public static int VERBOSE_LEVEL = 3;
 
     public void setVerboseLevel(int level) {
         VERBOSE_LEVEL = level;

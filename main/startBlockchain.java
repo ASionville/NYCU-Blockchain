@@ -216,7 +216,7 @@ public class startBlockchain {
                         String response = Base64Utils.decodeToString(responseB64);
                         
                         if ("Ok".equals(response) || "Dup".equals(response)) {
-                            Logger.log("Connected to node " + remoteNode.getNodeAddress() + ":" + 
+                            Logger.info("Connected to node " + remoteNode.getNodeAddress() + ":" + 
                                      remoteNode.getNodePort() + " (response: " + response + ")");
                             blockchain.addP2PNodes(remoteNode);
 
@@ -237,15 +237,15 @@ public class startBlockchain {
         
         // Clone blockchain from first node if found
         if (firstActiveNode != null) {
-            Logger.log("Attempting to clone blockchain from " + firstActiveNode.toString() + "...");
+            Logger.info("Attempting to clone blockchain from " + firstActiveNode.toString() + "...");
             boolean cloned = blockchain.getBlockchainFrom(firstActiveNode);
             if (cloned) {
-                Logger.log("Blockchain cloned successfully!");
+                Logger.info("Blockchain cloned successfully!");
             } else {
                 Logger.warn("Failed to clone blockchain.");
             }
         } else {
-            Logger.log("No existing nodes found. Starting as the first node in the network.");
+            Logger.info("No existing nodes found. Starting as the first node in the network.");
         }
     }
     
@@ -365,7 +365,7 @@ public class startBlockchain {
         
         // Determine which hosts to scan based on configuration
         if (p2pblockchain.config.NetworkConfig.SCAN_LOCAL_NETWORK) {
-            Logger.log("Scanning local network for existing nodes...");
+            Logger.info("Scanning local network for existing nodes...");
             List<String> networkPrefixes = getLocalNetworkPrefixes();
             
             // For each network prefix, add all possible host IPs (1-254)
@@ -376,7 +376,7 @@ public class startBlockchain {
             }
         } else {
             // Only scan localhost
-            Logger.log("Scanning localhost only...");
+            Logger.info("Scanning localhost only...");
             hostsToScan.add("127.0.0.1");
         }
         
@@ -503,7 +503,8 @@ public class startBlockchain {
                 }
             }
         } catch (Exception e) {
-            Logger.error("Failed to start broadcast listener: " + e.getMessage());
+            Logger.warn("Failed to start broadcast listener: " + e.getMessage());
+            Logger.info("Going back to localhost-only mode.");
         }
     }
     
@@ -724,7 +725,7 @@ public class startBlockchain {
                 50, 
                 InetAddress.getByName("0.0.0.0")
             );
-            Logger.log("Network Ready on " + serverSocket.getLocalSocketAddress());
+            Logger.info("Network Ready on " + serverSocket.getLocalSocketAddress());
             while (true) {
                 Socket clientSocket = serverSocket.accept();
                 Thread clientThread = new Thread(
@@ -808,7 +809,7 @@ public class startBlockchain {
                         blockchain.removeP2PNode(leavingNode);
                         socketOutput.write(Base64Utils.encodeToString("Bye") + "\n");
                         socketOutput.flush();
-                        Logger.log("Node " + leavingNode.toString() + " has left the network.");
+                        Logger.info("Node " + leavingNode.toString() + " has left the network.");
 
                     } else if (request.contentEquals(MessageType.BCAST_BLOCK)) {
                         // receive: broadcastedBlock, b64(block.toBase64)

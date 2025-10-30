@@ -68,7 +68,7 @@ public class Blockchain {
     public Blockchain(String walletName, int chosenPort) {
         myNode = new P2PNode(getLocalIPAddress(), chosenPort);
         wallet = new Wallet(walletName);
-        Logger.log("Account loaded : " + wallet.getAccount());
+        Logger.info("Account loaded : " + wallet.getAccount());
         Logger.log("Node address : " + myNode.getNodeAddress() + ":" + myNode.getNodePort());
         difficulty = p2pblockchain.config.BlockchainConfig.INITIAL_DIFFICULTY;
         chain = new ArrayList<Block>();
@@ -176,7 +176,6 @@ public class Blockchain {
      */
     public void mineBlock() {
         if (!this.mining) {
-            Logger.log("Mining is disabled. Cannot mine new block.");
             return;
         }
 
@@ -211,7 +210,7 @@ public class Blockchain {
 
         Instant endTime = Instant.now();
         Logger.log("Hash found: " + newBlock.getHash() + " (Difficulty: " + difficulty + ", Time taken: " + Duration.between(startTime, endTime).toMillis() + " ms)");
-
+        
         // Check block in case another block is added while mining
         if (!chain.isEmpty()) {
             Block lastBlock = chain.getLast();
@@ -249,6 +248,7 @@ public class Blockchain {
             } else {
                 // No conflict, add the new block
                 chain.addLast(newBlock);
+                Logger.info("New block mined and added to chain");
                 // send JSON(Base64) produced by Block.toBase64()
                 this.broadcastNetworkMessage(MessageType.BCAST_BLOCK, newBlock.toBase64());
             }
@@ -256,6 +256,7 @@ public class Blockchain {
         } else {
             // Chain is empty, add the new block
             chain.addLast(newBlock);
+            Logger.info("New block mined and added to chain");
             this.broadcastNetworkMessage(MessageType.BCAST_BLOCK, newBlock.toBase64());
         }
     }
@@ -403,7 +404,8 @@ public class Blockchain {
                 }
             }
 
-            Logger.log("Received valid block. Adding to chain: " + newBlock.toString());
+            Logger.info("Received valid block. Adding to chain");
+            Logger.log("Block details: " + newBlock.toString());
             this.chain.addLast(newBlock);
             
             // Update local difficulty to match the received block
@@ -453,7 +455,8 @@ public class Blockchain {
                 }
 
                 pendingTransactions.add(newTransaction);
-                Logger.warn("Received valid transaction. Added to pending list: " + newTransaction.toString());
+                Logger.info("Received valid transaction. Added to pending list");
+                Logger.log("Transaction details: " + newTransaction.toString());
                 this.broadcastNetworkMessage(MessageType.BCAST_TRANSACT, newTransaction.toBase64());
                 return true;
             }
@@ -474,7 +477,7 @@ public class Blockchain {
         if (this.addP2PNodes(newNode)) {
             this.broadcastNetworkMessage(MessageType.BCAST_NEWNODE, newNode.toBase64(), newNode);
         } else {
-            Logger.error("Failed to add duplicate P2P node: " + newNode.toString());
+            Logger.warn("Failed to add duplicate P2P node: " + newNode.toString());
             return false;
         }
         return true;
@@ -501,7 +504,7 @@ public class Blockchain {
             this.pendingTransactions.clear();
         }
 
-        Logger.log("Cloning blockchain from node " + node.toString() + " ...");
+        Logger.info("Cloning blockchain from node " + node.toString() + " ...");
 
         try {
             node.connect();
@@ -541,7 +544,7 @@ public class Blockchain {
                 socketInput.close();
                 socketOutput.close();
                 node.disconnect();
-                Logger.log("Blockchain cloned successfully from node " + node.toString() + ". Current chain length: " + this.chain.size());
+                Logger.info("Blockchain cloned successfully from node " + node.toString() + ". Current chain length: " + this.chain.size());
                 
                 // Synchronize difficulty with the cloned chain
                 if (!this.chain.isEmpty()) {
@@ -552,7 +555,7 @@ public class Blockchain {
                 
                 // Restart mining after successful clone
                 this.mining = true;
-                Logger.log("Mining restarted after blockchain sync.");
+                Logger.info("Mining restarted after blockchain sync.");
             }
             return true;
 
