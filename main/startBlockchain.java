@@ -567,7 +567,7 @@ public class startBlockchain {
 
                 switch (cmd) {
                     case "help":
-                        System.out.println("Commands:\n  help\n  balance <address>\n  mybalance\n  send <to> <amount> <fee> [message]\n  start\n  stop\n  join <host:port>\n  clone <host:port>\n  listpeers\n  quit");
+                        System.out.println("Commands:\n  help\n  balance <address>\n  mybalance\n  send <to> <amount> <fee> [message]\n  start\n  stop\n  join <host:port>\n  clone <host:port>\n  listpeers\n  listwallets\n  quit");
                         break;
 
                     case "balance":
@@ -644,6 +644,33 @@ public class startBlockchain {
 
                     case "listpeers":
                         for (P2PNode p : blockchain.getP2PNodes()) System.out.println(" - " + p.toString());
+                        break;
+
+                    case "listwallets":
+                        {
+                            ArrayList<String[]> wallets = blockchain.getAllWalletsFromNetwork();
+                            if (wallets.isEmpty()) {
+                                System.out.println("No wallets found.");
+                            } else {
+                                System.out.println("\n=== Wallets on Network ===");
+                                System.out.println(String.format("%-15s %-80s %15s", "Name", "Address", "Balance"));
+                                System.out.println("-".repeat(112));
+                                for (String[] walletInfo : wallets) {
+                                    String name = walletInfo[0];
+                                    String address = walletInfo[1];
+                                    String balance = walletInfo[2];
+                                    
+                                    // Truncate address if too long for display
+                                    String displayAddress = address.length() > 77 ? 
+                                        address.substring(0, 74) + "..." : address;
+                                    
+                                    System.out.println(String.format("%-15s %-80s %15s", 
+                                        name, displayAddress, balance));
+                                }
+                                System.out.println("-".repeat(112));
+                                System.out.println("Total wallets: " + wallets.size());
+                            }
+                        }
                         break;
 
                     case "send":
@@ -827,6 +854,21 @@ public class startBlockchain {
                         socketOutput.flush();
                     } else if (receivedMessage.contentEquals(MessageType.CLONE_CHAIN)) {
                         socketOutput.write(blockchain.toBase64ForExchange() + "\n");
+                        socketOutput.flush();
+                    } else if (receivedMessage.contentEquals(MessageType.GET_LOCAL_WALLETS)) {
+                        // Get local wallets and return as JSON array
+                        ArrayList<String[]> localWallets = blockchain.getAllWalletsWithBalances();
+                        p2pblockchain.utils.JsonArray walletsArray = new p2pblockchain.utils.JsonArray();
+                        
+                        for (String[] walletInfo : localWallets) {
+                            p2pblockchain.utils.JsonObject walletObj = new p2pblockchain.utils.JsonObject();
+                            walletObj.put("name", walletInfo[0]);
+                            walletObj.put("address", walletInfo[1]);
+                            walletObj.put("balance", walletInfo[2]);
+                            walletsArray.add(walletObj);
+                        }
+                        
+                        socketOutput.write(Base64Utils.encodeToString(walletsArray.toString()) + "\n");
                         socketOutput.flush();
                     } else {
                         Logger.error("Unrecognized command: " + receivedMessage);

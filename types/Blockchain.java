@@ -898,4 +898,121 @@ public class Blockchain {
             return false;
         }
     }
+    
+    /**
+     * Get all wallets from the wallets directory with their addresses and balances.
+     * 
+     * @return ArrayList of String arrays where each array contains [walletName, address, balance]
+     */
+    public ArrayList<String[]> getAllWalletsWithBalances() {
+        ArrayList<String[]> walletInfoList = new ArrayList<>();
+        
+        try {
+            java.io.File walletsDir = new java.io.File("wallets");
+            
+            // Check if wallets directory exists
+            if (!walletsDir.exists() || !walletsDir.isDirectory()) {
+                Logger.warn("Wallets directory not found.");
+                return walletInfoList;
+            }
+            
+            // List all subdirectories (each is a wallet)
+            java.io.File[] walletDirs = walletsDir.listFiles(java.io.File::isDirectory);
+            
+            if (walletDirs == null || walletDirs.length == 0) {
+                Logger.warn("No wallets found in wallets directory.");
+                return walletInfoList;
+            }
+            
+            // For each wallet directory, load the wallet and get its info
+            for (java.io.File walletDir : walletDirs) {
+                String walletName = walletDir.getName();
+                
+                try {
+                    // Create a temporary Wallet instance to get the address
+                    Wallet tempWallet = new Wallet(walletName);
+                    String address = tempWallet.getAccount();
+                    double balance = getAccountBalance(address);
+                    
+                    // Store [name, address, balance]
+                    walletInfoList.add(new String[] {
+                        walletName,
+                        address,
+                        String.format("%.2f", balance)
+                    });
+                } catch (Exception e) {
+                    Logger.warn("Failed to load wallet: " + walletName + " - " + e.getMessage());
+                }
+            }
+            
+            // Sort by wallet name
+            walletInfoList.sort((a, b) -> a[0].compareTo(b[0]));
+            
+        } catch (Exception e) {
+            Logger.error("Error listing wallets: " + e.getMessage());
+            e.printStackTrace();
+        }
+        
+        return walletInfoList;
+    }
+    
+    /**
+     * Query all peers in the network for their local wallets and aggregate the results.
+     * Each wallet is identified by its unique address to avoid duplicates.
+     * 
+     * @return ArrayList of String arrays where each array contains [walletName, address, balance]
+     */
+    public ArrayList<String[]> getAllWalletsFromNetwork() {
+        // Use a map to track unique wallets by address
+        java.util.HashMap<String, String[]> uniqueWallets = new java.util.HashMap<>();
+        
+        // First, add local wallets
+        ArrayList<String[]> localWallets = getAllWalletsWithBalances();
+        for (String[] walletInfo : localWallets) {
+            String address = walletInfo[1];
+            uniqueWallets.put(address, walletInfo);
+        }
+        
+        // Query each peer for their local wallets
+        for (P2PNode peer : p2pNodes) {
+            try (Socket socket = new Socket(peer.getNodeAddress(), peer.getNodePort());
+                 BufferedWriter out = new BufferedWriter(new OutputStreamWriter(socket.getOutputStream()));
+                 BufferedReader in = new BufferedReader(new InputStreamReader(socket.getInputStream()))) {
+                
+                // Send request for local wallets
+                out.write(MessageType.GET_LOCAL_WALLETS + "\n");
+                out.flush();
+                
+                // Read response
+                String responseB64 = in.readLine();
+                if (responseB64 != null && !responseB64.trim().isEmpty()) {
+                    String responseJson = Base64Utils.decodeToString(responseB64);
+                    
+                    // Parse JSON array response by wrapping it into an object so we can use JsonObject(String)
+                    JsonObject wrapper = new JsonObject("{\"wallets\":" + responseJson + "}");
+                    JsonArray walletsArray = wrapper.getJsonArray("wallets");
+                    for (int i = 0; i < walletsArray.size(); i++) {
+                        JsonObject walletObj = walletsArray.getJsonObject(i);
+                        String name = walletObj.getString("name");
+                        String address = walletObj.getString("address");
+                        String balance = walletObj.getString("balance");
+                        
+                        // Only add if we don't already have this wallet
+                        if (!uniqueWallets.containsKey(address)) {
+                            uniqueWallets.put(address, new String[] {name, address, balance});
+                        }
+                    }
+                }
+                
+            } catch (Exception e) {
+                Logger.warn("Failed to get wallets from peer " + peer.toString() + ": " + e.getMessage());
+            }
+        }
+        
+        // Convert to ArrayList and sort by name
+        ArrayList<String[]> result = new ArrayList<>(uniqueWallets.values());
+        result.sort((a, b) -> a[0].compareTo(b[0]));
+        
+        return result;
+    }
 }

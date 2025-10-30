@@ -59,4 +59,8 @@ public class MessageType {
     // Expected: cloneBlockchain
     // Response: b64(blockchain.toBase64())
 
+    public static String GET_LOCAL_WALLETS = "getLocalWallets";
+    // Expected: getLocalWallets
+    // Response: b64(JSON array of wallet info)
+
 }
