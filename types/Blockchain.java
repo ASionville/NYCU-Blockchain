@@ -511,7 +511,7 @@ public class Blockchain {
                     for (int i = 0; i < this.chain.size() - 2; i++) {
                         // Check previous hash linkage
                         if (!this.chain.get(i + 1).getPreviousHash().contentEquals(this.chain.get(i).getHash())) {
-                            Logger.error("Blockchain integrity check failed after cloning. Discarding cloned chain.");
+                            Logger.error("Blockchain integrity check failed after cloning: previous hash linkage failed. Discarding cloned chain.");
                             this.chain.clear();
                             this.pendingTransactions.clear();
                             return false;
@@ -519,7 +519,7 @@ public class Blockchain {
 
                         // Check timestamp order
                         if (this.chain.get(i + 1).getTimestamp() < this.chain.get(i).getTimestamp()) {
-                            Logger.error("Blockchain integrity check failed after cloning. Discarding cloned chain.");
+                            Logger.error("Blockchain integrity check failed after cloning: timestamp order invalid. Discarding cloned chain.");
                             this.chain.clear();
                             this.pendingTransactions.clear();
                             return false;
