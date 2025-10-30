@@ -217,11 +217,17 @@ public class Blockchain {
         }
     }
 
+    /**
+     * Start the mining process.
+     */
     public void startMining() {
         this.mining = true;
         Logger.log("Mining started.");
     }
 
+    /**
+     * Stop the mining process.
+     */
     public void stopMining() {
         this.mining = false;
         Logger.log("Mining stopped.");
@@ -369,6 +375,17 @@ public class Blockchain {
         }
     }
 
+    /**
+     * Receive and validate a transaction from the network.
+     *
+     * The method checks the transaction signature, sender balance,
+     * and for duplicates in pending transactions and the chain.
+     * If valid, the transaction is added to the pending list and
+     * broadcast locally.
+     *
+     * @param newTransaction transaction received from peer
+     * @return true if the transaction was accepted and added to pending
+     */
     public boolean receiveTransaction(Transaction newTransaction) {
         if (SecurityUtils.isSignatureValid(newTransaction.getSender(), newTransaction.contentToBase64(), newTransaction.getSignature())) {
 
@@ -638,6 +655,9 @@ public class Blockchain {
         return result;
     }
 
+    /**
+     * Broadcast a leave network message to all known peers.
+     */
     public void broadcastLeaveNetwork() {
         if (this.myNode == null) {
             Logger.error("Cannot broadcast leave: local node not set!");
