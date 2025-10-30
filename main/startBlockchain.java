@@ -78,6 +78,7 @@ public class startBlockchain {
         networkThread.start();
 
         // Wait for network server to be ready
+        // Wait for network server to be ready
         try { Thread.sleep(1000); } catch (InterruptedException e) {}
 
         // Try to connect to bootstrap nodes on startup
@@ -96,6 +97,9 @@ public class startBlockchain {
     }
 
     /**
+     * Attempts to automatically connect to bootstrap nodes to join the network.
+     * Ignores the local node (same port) and tries to clone the blockchain from
+     * the first active node found.
      * Attempts to automatically connect to bootstrap nodes to join the network.
      * Ignores the local node (same port) and tries to clone the blockchain from
      * the first active node found.
@@ -118,15 +122,19 @@ public class startBlockchain {
                 int port = Integer.parseInt(parts[1]);
                 
                 Logger.log("trying to connect to " + bootstrapAddress + "...");
+                Logger.log("trying to connect to " + bootstrapAddress + "...");
 
+                // Try to connect to the node
                 // Try to connect to the node
                 try (Socket testSocket = new Socket(host, port);
                     BufferedWriter out = new BufferedWriter(new OutputStreamWriter(testSocket.getOutputStream()));
                     BufferedReader in = new BufferedReader(new InputStreamReader(testSocket.getInputStream()))) {
                     
                     // Create a P2PNode instance for the remote node
+                    // Create a P2PNode instance for the remote node
                     P2PNode remoteNode = new P2PNode(host, port);
                     
+                    // Send a Join Network request
                     // Send a Join Network request
                     out.write(MessageType.JOIN_NETWORK + ", " + myNode.toBase64() + "\n");
                     out.flush();
@@ -137,8 +145,11 @@ public class startBlockchain {
                         
                         if ("Ok".equals(response) || "Dup".equals(response)) {
                             Logger.log("Connected to node " + bootstrapAddress + " (response: " + response + ")");
+                            Logger.log("Connected to node " + bootstrapAddress + " (response: " + response + ")");
                             blockchain.addP2PNodes(remoteNode);
                             foundNode = true;
+
+                            // Save the first active node to clone the blockchain
 
                             // Save the first active node to clone the blockchain
                             if (firstActiveNode == null) {
@@ -146,27 +157,36 @@ public class startBlockchain {
                             }
                         } else {
                             Logger.warn("Node " + bootstrapAddress + " refused connection: " + response);
+                            Logger.warn("Node " + bootstrapAddress + " refused connection: " + response);
                         }
                     }
                 } catch (Exception e) {
                     // This node is not available, continue with the next
                     Logger.log("Node " + bootstrapAddress + " not available.");
+                    // This node is not available, continue with the next
+                    Logger.log("Node " + bootstrapAddress + " not available.");
                 }
             } catch (Exception e) {
+                Logger.warn("Error while trying to connect to " + bootstrapAddress + ": " + e.getMessage());
                 Logger.warn("Error while trying to connect to " + bootstrapAddress + ": " + e.getMessage());
             }
         }
 
         // If we found at least one node, clone the blockchain
+        // If we found at least one node, clone the blockchain
         if (foundNode && firstActiveNode != null) {
+            Logger.log("Attempting to clone blockchain from " + firstActiveNode.toString() + "...");
             Logger.log("Attempting to clone blockchain from " + firstActiveNode.toString() + "...");
             boolean cloned = blockchain.getBlockchainFrom(firstActiveNode);
             if (cloned) {
                 Logger.log("Blockchain cloned successfully!");
+                Logger.log("Blockchain cloned successfully!");
             } else {
+                Logger.warn("Failed to clone blockchain.");
                 Logger.warn("Failed to clone blockchain.");
             }
         } else {
+            Logger.log("No existing nodes found. Starting as the first node in the network.");
             Logger.log("No existing nodes found. Starting as the first node in the network.");
         }
     }
