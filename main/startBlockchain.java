@@ -635,8 +635,13 @@ public class startBlockchain {
      */
     public static void networkServer(Blockchain blockchain) {
         try {
-            ServerSocket serverSocket = new ServerSocket(p2pblockchain.config.NetworkConfig.socketPort);
-            Logger.log("Network Ready");
+            // Bind to 0.0.0.0 to accept connections from all network interfaces
+            ServerSocket serverSocket = new ServerSocket(
+                p2pblockchain.config.NetworkConfig.socketPort, 
+                50, 
+                InetAddress.getByName("0.0.0.0")
+            );
+            Logger.log("Network Ready on " + serverSocket.getLocalSocketAddress());
             while (true) {
                 Socket clientSocket = serverSocket.accept();
                 Thread clientThread = new Thread(
