@@ -26,7 +26,11 @@ public class MessageType {
     public static String JOIN_NETWORK = "joinNetwork";
     // Expected: joinNetwork, b64(networknode.toBase64)
     // Response: b64(Ok), b64(Dup)
-    
+
+    public static String LEAVE_NETWORK = "leaveNetwork";
+    // Expected: leaveNetwork, b64(networkNode.toBase64)
+    // Response: b64(Ok)
+
     public static String MINE_START = "startMining";
     // Expected: startMining
     // Response: b64(Ok)

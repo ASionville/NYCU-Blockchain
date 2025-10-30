@@ -35,6 +35,7 @@ import p2pblockchain.utils.JsonObject;
 
 public class Blockchain {
     private Wallet wallet;    
+    private P2PNode myNode;
     private int difficulty = 0;
     private boolean mining = true;
     private ArrayList<Block> chain;
@@ -42,11 +43,19 @@ public class Blockchain {
     private ArrayList<P2PNode> p2pNodes;
 
     /**
+     * Get the local node identity.
+     */
+    public P2PNode getMyNode() {
+        return this.myNode;
+    }
+
+    /**
      * Constructor to initialize the blockchain with a given wallet.
      *
      * @param walletName the wallet to be associated with the blockchain
      */
-    public Blockchain(String walletName) {
+    public Blockchain(String walletName, int chosenPort) {
+        myNode = new P2PNode("localhost", chosenPort);
         wallet = new Wallet(walletName);
         Logger.log("Account loaded : " + wallet.getAccount());
         difficulty = p2pblockchain.config.BlockchainConfig.INITIAL_DIFFICULTY;
@@ -601,8 +610,8 @@ public class Blockchain {
      */
     public boolean addP2PNodes(P2PNode newNode) {
         if (this.p2pNodes.contains(newNode)) {
-                return false;
-            }
+            return false;
+        }
         System.out.println("yolo");
         if (newNode == null) {
             Logger.error("Cannot add P2P node with null socket: " + newNode.toString());
@@ -627,6 +636,44 @@ public class Blockchain {
             Logger.error("Failed to remove P2P node (not found): " + badNode.toString());
         }
         return result;
+    }
+
+    public void broadcastLeaveNetwork() {
+        if (this.myNode == null) {
+            Logger.error("Cannot broadcast leave: local node not set!");
+            return;
+        }
+        Logger.log("Broadcasting leave network message to all peers...");
+        this.broadcastNetworkMessage(MessageType.LEAVE_NETWORK, this.myNode.toBase64());
+        Logger.log("Leave network message sent to all peers.");
+    }
+
+    /**
+     * Check if we should exclude ourselves from broadcasts.
+     */
+    private boolean isMyself(P2PNode node) {
+        return this.myNode != null && this.myNode.equals(node);
+    }
+
+    /**
+     * Close all connections and clean up resources. Should be called during
+     * graceful shutdown.
+     */
+    public void closeAllConnections() {
+        Logger.log("Closing all peer connections...");
+
+        // Disconnect all peer nodes
+        for (P2PNode node : this.p2pNodes) {
+            try {
+                if (node.isConnected()) {
+                    node.disconnect();
+                }
+            } catch (Exception e) {
+                Logger.warn("Failed to disconnect from " + node.toString());
+            }
+        }
+
+        Logger.log("All connections closed.");
     }
 
     /**

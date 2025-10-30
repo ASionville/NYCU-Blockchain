@@ -59,9 +59,19 @@ public class startBlockchain {
             Logger.warn("Failed to read startup input, using defaults.");
         }
 
-        Blockchain blockchain = new Blockchain(walletName);
+        Blockchain blockchain = new Blockchain(walletName, chosenPort);
         // Create a local Wallet instance (loads same keypair) for signing TXs
         Wallet wallet = new Wallet(walletName);
+
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+            Logger.log("Shutdown detected, notifying peers...");
+            blockchain.broadcastLeaveNetwork();
+            
+            try { Thread.sleep(500); } catch (InterruptedException e) {}
+            
+            blockchain.closeAllConnections();
+            Logger.log("Graceful shutdown complete.");
+        }));
 
         Thread networkThread = new Thread(() -> { networkServer(blockchain); });
         networkThread.setDaemon(true);
@@ -372,6 +382,13 @@ public class startBlockchain {
                         }
                         socketOutput.flush();
                     
+                    } else if (request.contentEquals(MessageType.LEAVE_NETWORK)) {
+                        P2PNode leavingNode = new P2PNode(messageElements[1]);
+                        blockchain.removeP2PNode(leavingNode);
+                        socketOutput.write(Base64Utils.encodeToString("Bye") + "\n");
+                        socketOutput.flush();
+                        Logger.log("Node " + leavingNode.toString() + " has left the network.");
+
                     } else if (request.contentEquals(MessageType.BCAST_BLOCK)) {
                         // receive: broadcastedBlock, b64(block.toBase64)
                         // returns: b64(Ok), b64(Duplicate)
