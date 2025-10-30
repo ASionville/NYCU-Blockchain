@@ -231,6 +231,7 @@ public class P2PNode implements AutoCloseable {
 
     /**
      * Two nodes are equal if they have the same address and port.
+     * Handles localhost/127.0.0.1 equivalence and normalizes addresses.
      */
     @Override
     public boolean equals(Object obj) {
@@ -243,12 +244,30 @@ public class P2PNode implements AutoCloseable {
 
         P2PNode other = (P2PNode) obj;
 
-        // For node address, consider "localhost" and "127.0.0.1" as equal
-        if ((this.nodeAddress.equals("localhost") && other.nodeAddress.equals("127.0.0.1"))
-            || (this.nodeAddress.equals("127.0.0.1") && other.nodeAddress.equals("localhost"))) {
-            return this.nodePort == other.nodePort;
+        // If ports are different, nodes are different
+        if (this.nodePort != other.nodePort) {
+            return false;
         }
-        return this.nodeAddress.equals(other.nodeAddress) && this.nodePort == other.nodePort;
+
+        // Normalize addresses for comparison
+        String thisAddr = normalizeAddress(this.nodeAddress);
+        String otherAddr = normalizeAddress(other.nodeAddress);
+
+        return thisAddr.equals(otherAddr);
+    }
+    
+    /**
+     * Normalize an address for comparison.
+     * Converts localhost to 127.0.0.1 for consistent comparison.
+     */
+    private static String normalizeAddress(String address) {
+        if (address == null) {
+            return "127.0.0.1";
+        }
+        if (address.equals("localhost")) {
+            return "127.0.0.1";
+        }
+        return address;
     }
 
     /**

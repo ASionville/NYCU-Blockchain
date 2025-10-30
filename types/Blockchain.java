@@ -55,15 +55,47 @@ public class Blockchain {
      * @param walletName the wallet to be associated with the blockchain
      */
     public Blockchain(String walletName, int chosenPort) {
-        myNode = new P2PNode("localhost", chosenPort);
+        myNode = new P2PNode(getLocalIPAddress(), chosenPort);
         wallet = new Wallet(walletName);
         Logger.log("Account loaded : " + wallet.getAccount());
+        Logger.log("Node address : " + myNode.getNodeAddress() + ":" + myNode.getNodePort());
         difficulty = p2pblockchain.config.BlockchainConfig.INITIAL_DIFFICULTY;
         chain = new ArrayList<Block>();
         pendingTransactions = new ArrayList<Transaction>();
         p2pNodes = new ArrayList<P2PNode>();
         // Create genesis block
         createGenesisBlock();
+    }
+    
+    /**
+     * Get the local IP address of this machine (non-loopback).
+     * 
+     * @return Local IP address as a string, or "127.0.0.1" if not found
+     */
+    private static String getLocalIPAddress() {
+        try {
+            java.util.Enumeration<java.net.NetworkInterface> interfaces = java.net.NetworkInterface.getNetworkInterfaces();
+            while (interfaces.hasMoreElements()) {
+                java.net.NetworkInterface iface = interfaces.nextElement();
+                
+                if (iface.isLoopback() || !iface.isUp()) {
+                    continue;
+                }
+                
+                java.util.Enumeration<java.net.InetAddress> addresses = iface.getInetAddresses();
+                while (addresses.hasMoreElements()) {
+                    java.net.InetAddress addr = addresses.nextElement();
+                    
+                    // We want IPv4 addresses only
+                    if (addr instanceof java.net.Inet4Address && !addr.isLoopbackAddress()) {
+                        return addr.getHostAddress();
+                    }
+                }
+            }
+        } catch (Exception e) {
+            Logger.error("Error getting local IP: " + e.getMessage());
+        }
+        return "127.0.0.1";
     }
 
     /**
