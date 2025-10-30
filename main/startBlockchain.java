@@ -77,10 +77,10 @@ public class startBlockchain {
         networkThread.setDaemon(true);
         networkThread.start();
 
-        // Attendre un peu que le serveur réseau démarre
+        // Wait for network server to be ready
         try { Thread.sleep(1000); } catch (InterruptedException e) {}
 
-        // Tenter de se connecter aux nœuds bootstrap au démarrage
+        // Try to connect to bootstrap nodes on startup
         discoverAndJoinNetwork(blockchain, chosenPort);
 
         // Start console interface
@@ -96,17 +96,18 @@ public class startBlockchain {
     }
 
     /**
-     * Tente de se connecter automatiquement aux nœuds bootstrap pour rejoindre le réseau.
-     * Ignore le nœud local (même port) et tente de cloner la blockchain du premier nœud trouvé.
+     * Attempts to automatically connect to bootstrap nodes to join the network.
+     * Ignores the local node (same port) and tries to clone the blockchain from
+     * the first active node found.
      */
     public static void discoverAndJoinNetwork(Blockchain blockchain, int myPort) {
-        Logger.log("Recherche de nœuds existants sur le réseau...");
+        Logger.log("Looking for existing nodes to join...");
         P2PNode myNode = new P2PNode("localhost", myPort);
         boolean foundNode = false;
         P2PNode firstActiveNode = null;
 
         for (String bootstrapAddress : BOOTSTRAP_NODES) {
-            // Ignorer notre propre port
+            // Skip self
             if (bootstrapAddress.contains(":" + myPort)) {
                 continue;
             }
@@ -116,17 +117,17 @@ public class startBlockchain {
                 String host = parts[0];
                 int port = Integer.parseInt(parts[1]);
                 
-                Logger.log("Tentative de connexion à " + bootstrapAddress + "...");
+                Logger.log("trying to connect to " + bootstrapAddress + "...");
 
-                // Essayer de se connecter au nœud
+                // Try to connect to the node
                 try (Socket testSocket = new Socket(host, port);
                     BufferedWriter out = new BufferedWriter(new OutputStreamWriter(testSocket.getOutputStream()));
                     BufferedReader in = new BufferedReader(new InputStreamReader(testSocket.getInputStream()))) {
                     
-                    // Créer le nœud P2P
+                    // Create a P2PNode instance for the remote node
                     P2PNode remoteNode = new P2PNode(host, port);
                     
-                    // Envoyer une demande de jointure au réseau
+                    // Send a Join Network request
                     out.write(MessageType.JOIN_NETWORK + ", " + myNode.toBase64() + "\n");
                     out.flush();
 
@@ -135,38 +136,38 @@ public class startBlockchain {
                         String response = Base64Utils.decodeToString(responseB64);
                         
                         if ("Ok".equals(response) || "Dup".equals(response)) {
-                            Logger.log("Connecté au nœud " + bootstrapAddress + " (réponse: " + response + ")");
+                            Logger.log("Connected to node " + bootstrapAddress + " (response: " + response + ")");
                             blockchain.addP2PNodes(remoteNode);
                             foundNode = true;
-                            
-                            // Sauvegarder le premier nœud actif pour cloner la blockchain
+
+                            // Save the first active node to clone the blockchain
                             if (firstActiveNode == null) {
                                 firstActiveNode = remoteNode;
                             }
                         } else {
-                            Logger.warn("Nœud " + bootstrapAddress + " a refusé la connexion: " + response);
+                            Logger.warn("Node " + bootstrapAddress + " refused connection: " + response);
                         }
                     }
                 } catch (Exception e) {
-                    // Ce nœud n'est pas disponible, continuer avec le suivant
-                    Logger.log("Nœud " + bootstrapAddress + " non disponible.");
+                    // This node is not available, continue with the next
+                    Logger.log("Node " + bootstrapAddress + " not available.");
                 }
             } catch (Exception e) {
-                Logger.warn("Erreur lors de la tentative de connexion à " + bootstrapAddress + ": " + e.getMessage());
+                Logger.warn("Error while trying to connect to " + bootstrapAddress + ": " + e.getMessage());
             }
         }
 
-        // Si on a trouvé au moins un nœud, cloner la blockchain
+        // If we found at least one node, clone the blockchain
         if (foundNode && firstActiveNode != null) {
-            Logger.log("Tentative de clonage de la blockchain depuis " + firstActiveNode.toString() + "...");
+            Logger.log("Attempting to clone blockchain from " + firstActiveNode.toString() + "...");
             boolean cloned = blockchain.getBlockchainFrom(firstActiveNode);
             if (cloned) {
-                Logger.log("Blockchain clonée avec succès!");
+                Logger.log("Blockchain cloned successfully!");
             } else {
-                Logger.warn("Échec du clonage de la blockchain.");
+                Logger.warn("Failed to clone blockchain.");
             }
         } else {
-            Logger.log("Aucun nœud existant trouvé. Démarrage en tant que premier nœud du réseau.");
+            Logger.log("No existing nodes found. Starting as the first node in the network.");
         }
     }
 
