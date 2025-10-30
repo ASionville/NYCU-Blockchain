@@ -600,11 +600,9 @@ public class Blockchain {
      * @return true when the node was added, false when duplicate
      */
     public boolean addP2PNodes(P2PNode newNode) {
-        for (P2PNode existingNode : this.p2pNodes) {
-            if (existingNode.toHash().contentEquals(newNode.toHash())) {
+        if (this.p2pNodes.contains(newNode)) {
                 return false;
             }
-        }
         System.out.println("yolo");
         if (newNode == null) {
             Logger.error("Cannot add P2P node with null socket: " + newNode.toString());

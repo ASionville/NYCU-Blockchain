@@ -228,4 +228,29 @@ public class P2PNode implements AutoCloseable {
     public String toHash() {
         return HashUtils.hashString(this.toBase64());
     }
+
+    /**
+     * Two nodes are equal if they have the same address and port.
+     */
+    @Override
+    public boolean equals(Object obj) {
+        if (this == obj) {
+            return true;
+        }
+        if (obj == null || getClass() != obj.getClass()) {
+            return false;
+        }
+
+        P2PNode other = (P2PNode) obj;
+        return this.nodePort == other.nodePort
+                && this.nodeAddress.equals(other.nodeAddress);
+    }
+
+    /**
+     * Hash code based on address and port for use in HashSet/HashMap.
+     */
+    @Override
+    public int hashCode() {
+        return java.util.Objects.hash(nodeAddress, nodePort);
+    }
 }
