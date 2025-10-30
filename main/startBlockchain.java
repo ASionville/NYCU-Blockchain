@@ -567,7 +567,7 @@ public class startBlockchain {
 
                 switch (cmd) {
                     case "help":
-                        System.out.println("Commands:\n  help\n  balance <address>\n  mybalance\n  send <to> <amount> <fee> [message]\n  start\n  stop\n  join <host:port>\n  clone <host:port>\n  listpeers\n  listwallets\n  quit");
+                        System.out.println("Commands:\n  help\n  balance <address>\n  mybalance\n  send <to> <amount> <fee> [message]\n  start\n  stop\n  join <host:port>\n  clone <host:port>\n  listpeers\n  listwallets\n  listblocks\n  quit");
                         break;
 
                     case "balance":
@@ -670,7 +670,11 @@ public class startBlockchain {
                                 System.out.println("-".repeat(112));
                                 System.out.println("Total wallets: " + wallets.size());
                             }
+                            
                         }
+                        break;
+                    case "listblocks":
+                        blockchain.listAllBlocks();
                         break;
 
                     case "send":

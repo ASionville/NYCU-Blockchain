@@ -50,6 +50,17 @@ public class Blockchain {
     }
 
     /**
+     * List all blocks in the blockchain with their hash values.
+     */
+    public void listAllBlocks() {
+        System.out.println("Listing all blocks in the blockchain:");
+        for (int i = 0; i < this.chain.size(); i++) {
+            Block block = this.chain.get(i);
+            System.out.println("Block " + i + ": " + block.toString());
+        }
+    }
+
+    /**
      * Constructor to initialize the blockchain with a given wallet.
      *
      * @param walletName the wallet to be associated with the blockchain
