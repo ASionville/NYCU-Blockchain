@@ -458,7 +458,6 @@ public class startBlockchain {
                         if (parts.length >= 2) {
                             try {
                                 int senderPort = Integer.parseInt(parts[1].trim());
-                                String senderAddress = receivePacket.getAddress().getHostAddress();
                                 
                                 // Get response port if provided, otherwise use source port
                                 int responsePort = receivePacket.getPort();
