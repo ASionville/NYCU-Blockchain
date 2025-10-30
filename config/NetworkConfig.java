@@ -8,6 +8,10 @@ public class NetworkConfig {
     public static int socketPort = 8300;
     public static final String socketHost = "127.0.0.1";
 
+    // Port range to scan for existing blockchain nodes
+    public static final int PORT_SCAN_START = 8000;
+    public static final int PORT_SCAN_END = 9000;
+
     /**
      * Change the network socket port at runtime.
      * @param port new port to use for the network server

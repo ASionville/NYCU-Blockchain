@@ -18,12 +18,7 @@ import p2pblockchain.utils.Logger;
 
 public class startBlockchain {
 
-    // List of bootstrap nodes to connect to on startup
-    private static final String[] BOOTSTRAP_NODES = {
-        "localhost:8300",
-        "localhost:8301",
-        "localhost:8302"
-    };
+    // Port range to scan for existing blockchain nodes
 
     public static void main(String[] args) {
         // Ask user for wallet name and network port before starting the node
@@ -96,35 +91,35 @@ public class startBlockchain {
     }
 
     /**
-     * Attempts to automatically connect to bootstrap nodes to join the network.
+     * Scans localhost ports in the defined range to discover existing blockchain nodes.
      * Ignores the local node (same port) and tries to clone the blockchain from
      * the first active node found.
      * 
      * @param blockchain The local Blockchain instance
      */
     public static void discoverAndJoinNetwork(Blockchain blockchain) {
-        Logger.log("Looking for existing nodes to join...");
+        Logger.log("Scanning localhost for existing nodes (ports " + p2pblockchain.config.NetworkConfig.PORT_SCAN_START + "-" + p2pblockchain.config.NetworkConfig.PORT_SCAN_END + ")...");
         P2PNode myNode = blockchain.getMyNode();
         boolean foundNode = false;
         P2PNode firstActiveNode = null;
+        int myPort = myNode.getNodePort();
 
-        for (String bootstrapAddress : BOOTSTRAP_NODES) {
+        for (int port = p2pblockchain.config.NetworkConfig.PORT_SCAN_START; port <= p2pblockchain.config.NetworkConfig.PORT_SCAN_END; port++) {
             // Skip self
-            if (bootstrapAddress.contains(":" + myNode.getNodePort())) {
+            if (port == myPort) {
                 continue;
             }
 
-            try {
-                String[] parts = bootstrapAddress.split(":");
-                String host = parts[0];
-                int port = Integer.parseInt(parts[1]);
-                
-                Logger.log("trying to connect to " + bootstrapAddress + "...");
+            String host = "localhost";
+            String address = host + ":" + port;
 
-                // Try to connect to the node
-                try (Socket testSocket = new Socket(host, port);
+            try {
+                // Try to connect to the node with a short timeout
+                try (Socket testSocket = new Socket()) {
+                    testSocket.connect(new java.net.InetSocketAddress(host, port), 100); // 100ms timeout
+                    
                     BufferedWriter out = new BufferedWriter(new OutputStreamWriter(testSocket.getOutputStream()));
-                    BufferedReader in = new BufferedReader(new InputStreamReader(testSocket.getInputStream()))) {
+                    BufferedReader in = new BufferedReader(new InputStreamReader(testSocket.getInputStream()));
                     
                     // Create a P2PNode instance for the remote node
                     P2PNode remoteNode = new P2PNode(host, port);
@@ -138,7 +133,7 @@ public class startBlockchain {
                         String response = Base64Utils.decodeToString(responseB64);
                         
                         if ("Ok".equals(response) || "Dup".equals(response)) {
-                            Logger.log("Connected to node " + bootstrapAddress + " (response: " + response + ")");
+                            Logger.log("Connected to node " + address + " (response: " + response + ")");
                             blockchain.addP2PNodes(remoteNode);
                             foundNode = true;
 
@@ -147,15 +142,18 @@ public class startBlockchain {
                                 firstActiveNode = remoteNode;
                             }
                         } else {
-                            Logger.warn("Node " + bootstrapAddress + " refused connection: " + response);
+                            Logger.warn("Node " + address + " refused connection: " + response);
                         }
                     }
-                } catch (Exception e) {
-                    // This node is not available, continue with the next
-                    Logger.log("Node " + bootstrapAddress + " not available.");
+                    
+                    out.close();
+                    in.close();
+                } catch (java.net.SocketTimeoutException | java.net.ConnectException e) {
+                    // Port not responding or connection refused - this is normal, skip silently
                 }
             } catch (Exception e) {
-                Logger.warn("Error while trying to connect to " + bootstrapAddress + ": " + e.getMessage());
+                // Unexpected error, log it
+                Logger.warn("Error while trying to connect to " + address + ": " + e.getMessage());
             }
         }
 
