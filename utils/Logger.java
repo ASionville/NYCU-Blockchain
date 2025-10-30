@@ -7,7 +7,13 @@ import p2pblockchain.config.BlockchainConfig;
  */
 public class Logger {
     public static void log(String message) {
-        if (BlockchainConfig.getVerboseLevel() >= 3 ) {
+        if (BlockchainConfig.getVerboseLevel() >= 4 ) {
+            System.out.println("[P2PBlockchain][DEBUG] " + message);
+        }
+    }
+
+    public static void info(String message) {
+        if (BlockchainConfig.getVerboseLevel() >= 3) {
             System.out.println("[P2PBlockchain][INFO] " + message);
         }
     }

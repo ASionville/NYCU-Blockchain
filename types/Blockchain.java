@@ -35,6 +35,7 @@ import p2pblockchain.utils.JsonObject;
 
 public class Blockchain {
     private Wallet wallet;    
+    private P2PNode myNode;
     private int difficulty = 0;
     private boolean mining = true;
     private ArrayList<Block> chain;
@@ -42,19 +43,70 @@ public class Blockchain {
     private ArrayList<P2PNode> p2pNodes;
 
     /**
+     * Get the local node identity.
+     */
+    public P2PNode getMyNode() {
+        return this.myNode;
+    }
+
+    /**
+     * List all blocks in the blockchain with their hash values.
+     */
+    public void listAllBlocks() {
+        System.out.println("Listing all blocks in the blockchain:");
+        for (int i = 0; i < this.chain.size(); i++) {
+            Block block = this.chain.get(i);
+            System.out.println("Block " + i + ": " + block.toString());
+        }
+    }
+
+    /**
      * Constructor to initialize the blockchain with a given wallet.
      *
      * @param walletName the wallet to be associated with the blockchain
      */
-    public Blockchain(String walletName) {
+    public Blockchain(String walletName, int chosenPort) {
+        myNode = new P2PNode(getLocalIPAddress(), chosenPort);
         wallet = new Wallet(walletName);
-        Logger.log("Account loaded : " + wallet.getAccount());
+        Logger.info("Account loaded : " + wallet.getAccount());
+        Logger.log("Node address : " + myNode.getNodeAddress() + ":" + myNode.getNodePort());
         difficulty = p2pblockchain.config.BlockchainConfig.INITIAL_DIFFICULTY;
         chain = new ArrayList<Block>();
         pendingTransactions = new ArrayList<Transaction>();
         p2pNodes = new ArrayList<P2PNode>();
         // Create genesis block
         createGenesisBlock();
+    }
+    
+    /**
+     * Get the local IP address of this machine (non-loopback).
+     * 
+     * @return Local IP address as a string, or "127.0.0.1" if not found
+     */
+    private static String getLocalIPAddress() {
+        try {
+            java.util.Enumeration<java.net.NetworkInterface> interfaces = java.net.NetworkInterface.getNetworkInterfaces();
+            while (interfaces.hasMoreElements()) {
+                java.net.NetworkInterface iface = interfaces.nextElement();
+                
+                if (iface.isLoopback() || !iface.isUp()) {
+                    continue;
+                }
+                
+                java.util.Enumeration<java.net.InetAddress> addresses = iface.getInetAddresses();
+                while (addresses.hasMoreElements()) {
+                    java.net.InetAddress addr = addresses.nextElement();
+                    
+                    // We want IPv4 addresses only
+                    if (addr instanceof java.net.Inet4Address && !addr.isLoopbackAddress()) {
+                        return addr.getHostAddress();
+                    }
+                }
+            }
+        } catch (Exception e) {
+            Logger.error("Error getting local IP: " + e.getMessage());
+        }
+        return "127.0.0.1";
     }
 
     /**
@@ -124,7 +176,6 @@ public class Blockchain {
      */
     public void mineBlock() {
         if (!this.mining) {
-            Logger.log("Mining is disabled. Cannot mine new block.");
             return;
         }
 
@@ -159,7 +210,7 @@ public class Blockchain {
 
         Instant endTime = Instant.now();
         Logger.log("Hash found: " + newBlock.getHash() + " (Difficulty: " + difficulty + ", Time taken: " + Duration.between(startTime, endTime).toMillis() + " ms)");
-
+        
         // Check block in case another block is added while mining
         if (!chain.isEmpty()) {
             Block lastBlock = chain.getLast();
@@ -197,6 +248,7 @@ public class Blockchain {
             } else {
                 // No conflict, add the new block
                 chain.addLast(newBlock);
+                Logger.info("New block mined and added to chain");
                 // send JSON(Base64) produced by Block.toBase64()
                 this.broadcastNetworkMessage(MessageType.BCAST_BLOCK, newBlock.toBase64());
             }
@@ -204,15 +256,22 @@ public class Blockchain {
         } else {
             // Chain is empty, add the new block
             chain.addLast(newBlock);
+            Logger.info("New block mined and added to chain");
             this.broadcastNetworkMessage(MessageType.BCAST_BLOCK, newBlock.toBase64());
         }
     }
 
+    /**
+     * Start the mining process.
+     */
     public void startMining() {
         this.mining = true;
         Logger.log("Mining started.");
     }
 
+    /**
+     * Stop the mining process.
+     */
     public void stopMining() {
         this.mining = false;
         Logger.log("Mining stopped.");
@@ -345,7 +404,8 @@ public class Blockchain {
                 }
             }
 
-            Logger.log("Received valid block. Adding to chain: " + newBlock.toString());
+            Logger.info("Received valid block. Adding to chain");
+            Logger.log("Block details: " + newBlock.toString());
             this.chain.addLast(newBlock);
             
             // Update local difficulty to match the received block
@@ -360,6 +420,17 @@ public class Blockchain {
         }
     }
 
+    /**
+     * Receive and validate a transaction from the network.
+     *
+     * The method checks the transaction signature, sender balance,
+     * and for duplicates in pending transactions and the chain.
+     * If valid, the transaction is added to the pending list and
+     * broadcast locally.
+     *
+     * @param newTransaction transaction received from peer
+     * @return true if the transaction was accepted and added to pending
+     */
     public boolean receiveTransaction(Transaction newTransaction) {
         if (SecurityUtils.isSignatureValid(newTransaction.getSender(), newTransaction.contentToBase64(), newTransaction.getSignature())) {
 
@@ -384,7 +455,8 @@ public class Blockchain {
                 }
 
                 pendingTransactions.add(newTransaction);
-                Logger.warn("Received valid transaction. Added to pending list: " + newTransaction.toString());
+                Logger.info("Received valid transaction. Added to pending list");
+                Logger.log("Transaction details: " + newTransaction.toString());
                 this.broadcastNetworkMessage(MessageType.BCAST_TRANSACT, newTransaction.toBase64());
                 return true;
             }
@@ -405,7 +477,7 @@ public class Blockchain {
         if (this.addP2PNodes(newNode)) {
             this.broadcastNetworkMessage(MessageType.BCAST_NEWNODE, newNode.toBase64(), newNode);
         } else {
-            Logger.error("Failed to add duplicate P2P node: " + newNode.toString());
+            Logger.warn("Failed to add duplicate P2P node: " + newNode.toString());
             return false;
         }
         return true;
@@ -432,7 +504,7 @@ public class Blockchain {
             this.pendingTransactions.clear();
         }
 
-        Logger.log("Cloning blockchain from node " + node.toString() + " ...");
+        Logger.info("Cloning blockchain from node " + node.toString() + " ...");
 
         try {
             node.connect();
@@ -453,7 +525,7 @@ public class Blockchain {
                     for (int i = 0; i < this.chain.size() - 2; i++) {
                         // Check previous hash linkage
                         if (!this.chain.get(i + 1).getPreviousHash().contentEquals(this.chain.get(i).getHash())) {
-                            Logger.error("Blockchain integrity check failed after cloning. Discarding cloned chain.");
+                            Logger.error("Blockchain integrity check failed after cloning: previous hash linkage failed. Discarding cloned chain.");
                             this.chain.clear();
                             this.pendingTransactions.clear();
                             return false;
@@ -461,7 +533,7 @@ public class Blockchain {
 
                         // Check timestamp order
                         if (this.chain.get(i + 1).getTimestamp() < this.chain.get(i).getTimestamp()) {
-                            Logger.error("Blockchain integrity check failed after cloning. Discarding cloned chain.");
+                            Logger.error("Blockchain integrity check failed after cloning: timestamp order invalid. Discarding cloned chain.");
                             this.chain.clear();
                             this.pendingTransactions.clear();
                             return false;
@@ -472,7 +544,7 @@ public class Blockchain {
                 socketInput.close();
                 socketOutput.close();
                 node.disconnect();
-                Logger.log("Blockchain cloned successfully from node " + node.toString() + ". Current chain length: " + this.chain.size());
+                Logger.info("Blockchain cloned successfully from node " + node.toString() + ". Current chain length: " + this.chain.size());
                 
                 // Synchronize difficulty with the cloned chain
                 if (!this.chain.isEmpty()) {
@@ -483,7 +555,7 @@ public class Blockchain {
                 
                 // Restart mining after successful clone
                 this.mining = true;
-                Logger.log("Mining restarted after blockchain sync.");
+                Logger.info("Mining restarted after blockchain sync.");
             }
             return true;
 
@@ -600,12 +672,10 @@ public class Blockchain {
      * @return true when the node was added, false when duplicate
      */
     public boolean addP2PNodes(P2PNode newNode) {
-        for (P2PNode existingNode : this.p2pNodes) {
-            if (existingNode.toHash().contentEquals(newNode.toHash())) {
-                return false;
-            }
+        if (this.p2pNodes.contains(newNode)) {
+            return false;
         }
-        System.out.println("yolo");
+
         if (newNode == null) {
             Logger.error("Cannot add P2P node with null socket: " + newNode.toString());
             return false;
@@ -629,6 +699,47 @@ public class Blockchain {
             Logger.error("Failed to remove P2P node (not found): " + badNode.toString());
         }
         return result;
+    }
+
+    /**
+     * Broadcast a leave network message to all known peers.
+     */
+    public void broadcastLeaveNetwork() {
+        if (this.myNode == null) {
+            Logger.error("Cannot broadcast leave: local node not set!");
+            return;
+        }
+        Logger.log("Broadcasting leave network message to all peers...");
+        this.broadcastNetworkMessage(MessageType.LEAVE_NETWORK, this.myNode.toBase64());
+        Logger.log("Leave network message sent to all peers.");
+    }
+
+    /**
+     * Check if we should exclude ourselves from broadcasts.
+     */
+    private boolean isMyself(P2PNode node) {
+        return this.myNode != null && this.myNode.equals(node);
+    }
+
+    /**
+     * Close all connections and clean up resources. Should be called during
+     * graceful shutdown.
+     */
+    public void closeAllConnections() {
+        Logger.log("Closing all peer connections...");
+
+        // Disconnect all peer nodes
+        for (P2PNode node : this.p2pNodes) {
+            try {
+                if (node.isConnected()) {
+                    node.disconnect();
+                }
+            } catch (Exception e) {
+                Logger.warn("Failed to disconnect from " + node.toString());
+            }
+        }
+
+        Logger.log("All connections closed.");
     }
 
     /**
@@ -800,5 +911,122 @@ public class Blockchain {
             e.printStackTrace();
             return false;
         }
+    }
+    
+    /**
+     * Get all wallets from the wallets directory with their addresses and balances.
+     * 
+     * @return ArrayList of String arrays where each array contains [walletName, address, balance]
+     */
+    public ArrayList<String[]> getAllWalletsWithBalances() {
+        ArrayList<String[]> walletInfoList = new ArrayList<>();
+        
+        try {
+            java.io.File walletsDir = new java.io.File("wallets");
+            
+            // Check if wallets directory exists
+            if (!walletsDir.exists() || !walletsDir.isDirectory()) {
+                Logger.warn("Wallets directory not found.");
+                return walletInfoList;
+            }
+            
+            // List all subdirectories (each is a wallet)
+            java.io.File[] walletDirs = walletsDir.listFiles(java.io.File::isDirectory);
+            
+            if (walletDirs == null || walletDirs.length == 0) {
+                Logger.warn("No wallets found in wallets directory.");
+                return walletInfoList;
+            }
+            
+            // For each wallet directory, load the wallet and get its info
+            for (java.io.File walletDir : walletDirs) {
+                String walletName = walletDir.getName();
+                
+                try {
+                    // Create a temporary Wallet instance to get the address
+                    Wallet tempWallet = new Wallet(walletName);
+                    String address = tempWallet.getAccount();
+                    double balance = getAccountBalance(address);
+                    
+                    // Store [name, address, balance]
+                    walletInfoList.add(new String[] {
+                        walletName,
+                        address,
+                        String.format("%.2f", balance)
+                    });
+                } catch (Exception e) {
+                    Logger.warn("Failed to load wallet: " + walletName + " - " + e.getMessage());
+                }
+            }
+            
+            // Sort by wallet name
+            walletInfoList.sort((a, b) -> a[0].compareTo(b[0]));
+            
+        } catch (Exception e) {
+            Logger.error("Error listing wallets: " + e.getMessage());
+            e.printStackTrace();
+        }
+        
+        return walletInfoList;
+    }
+    
+    /**
+     * Query all peers in the network for their local wallets and aggregate the results.
+     * Each wallet is identified by its unique address to avoid duplicates.
+     * 
+     * @return ArrayList of String arrays where each array contains [walletName, address, balance]
+     */
+    public ArrayList<String[]> getAllWalletsFromNetwork() {
+        // Use a map to track unique wallets by address
+        java.util.HashMap<String, String[]> uniqueWallets = new java.util.HashMap<>();
+        
+        // First, add local wallets
+        ArrayList<String[]> localWallets = getAllWalletsWithBalances();
+        for (String[] walletInfo : localWallets) {
+            String address = walletInfo[1];
+            uniqueWallets.put(address, walletInfo);
+        }
+        
+        // Query each peer for their local wallets
+        for (P2PNode peer : p2pNodes) {
+            try (Socket socket = new Socket(peer.getNodeAddress(), peer.getNodePort());
+                 BufferedWriter out = new BufferedWriter(new OutputStreamWriter(socket.getOutputStream()));
+                 BufferedReader in = new BufferedReader(new InputStreamReader(socket.getInputStream()))) {
+                
+                // Send request for local wallets
+                out.write(MessageType.GET_LOCAL_WALLETS + "\n");
+                out.flush();
+                
+                // Read response
+                String responseB64 = in.readLine();
+                if (responseB64 != null && !responseB64.trim().isEmpty()) {
+                    String responseJson = Base64Utils.decodeToString(responseB64);
+                    
+                    // Parse JSON array response by wrapping it into an object so we can use JsonObject(String)
+                    JsonObject wrapper = new JsonObject("{\"wallets\":" + responseJson + "}");
+                    JsonArray walletsArray = wrapper.getJsonArray("wallets");
+                    for (int i = 0; i < walletsArray.size(); i++) {
+                        JsonObject walletObj = walletsArray.getJsonObject(i);
+                        String name = walletObj.getString("name");
+                        String address = walletObj.getString("address");
+                        String balance = walletObj.getString("balance");
+                        
+                        // Only add if we don't already have this wallet
+                        if (!uniqueWallets.containsKey(address)) {
+                            uniqueWallets.put(address, new String[] {name, address, balance});
+                        }
+                    }
+                }
+                
+            } catch (Exception e) {
+                Logger.warn("Failed to get wallets from peer " + peer.toString() + ": " + e.getMessage());
+            }
+        }
+        
+        // Convert to ArrayList and sort by name
+        ArrayList<String[]> result = new ArrayList<>(uniqueWallets.values());
+        result.sort((a, b) -> a[0].compareTo(b[0]));
+        
+        return result;
     }
 }

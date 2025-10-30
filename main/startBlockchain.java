@@ -4,8 +4,17 @@ import java.io.BufferedReader;
 import java.io.BufferedWriter;
 import java.io.InputStreamReader;
 import java.io.OutputStreamWriter;
+import java.net.DatagramPacket;
+import java.net.DatagramSocket;
+import java.net.InetAddress;
+import java.net.InterfaceAddress;
+import java.net.NetworkInterface;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.net.SocketTimeoutException;
+import java.util.ArrayList;
+import java.util.Enumeration;
+import java.util.List;
 
 import p2pblockchain.types.Block;
 import p2pblockchain.types.Blockchain;
@@ -18,12 +27,62 @@ import p2pblockchain.utils.Logger;
 
 public class startBlockchain {
 
-    // Liste des nœuds bootstrap connus pour la découverte initiale
-    private static final String[] BOOTSTRAP_NODES = {
-        "localhost:8300",
-        "localhost:8301",
-        "localhost:8302"
-    };
+    // Port range to scan for existing blockchain nodes
+
+    /**
+     * Get all local network IP addresses (private network ranges).
+     * Returns a list of IP prefixes to scan (e.g., "192.168.1" for 192.168.1.0/24).
+     * 
+     * @return List of network prefixes to scan
+     */
+    public static List<String> getLocalNetworkPrefixes() {
+        List<String> networkPrefixes = new ArrayList<>();
+        try {
+            Enumeration<NetworkInterface> interfaces = NetworkInterface.getNetworkInterfaces();
+            while (interfaces.hasMoreElements()) {
+                NetworkInterface iface = interfaces.nextElement();
+                
+                // Skip loopback and inactive interfaces
+                if (iface.isLoopback() || !iface.isUp()) {
+                    continue;
+                }
+                
+                Enumeration<InetAddress> addresses = iface.getInetAddresses();
+                while (addresses.hasMoreElements()) {
+                    InetAddress addr = addresses.nextElement();
+                    
+                    // Only process IPv4 addresses in private ranges
+                    if (addr instanceof java.net.Inet4Address) {
+                        String ip = addr.getHostAddress();
+                        
+                        // Check if it's a private network IP
+                        if (ip.startsWith("192.168.") || ip.startsWith("10.") || 
+                            (ip.startsWith("172.") && Integer.parseInt(ip.split("\\.")[1]) >= 16 && Integer.parseInt(ip.split("\\.")[1]) <= 31)) {
+                            
+                            // Extract network prefix (e.g., "192.168.1" from "192.168.1.100")
+                            String[] parts = ip.split("\\.");
+                            if (parts.length == 4) {
+                                String prefix = parts[0] + "." + parts[1] + "." + parts[2];
+                                if (!networkPrefixes.contains(prefix)) {
+                                    networkPrefixes.add(prefix);
+                                    Logger.log("Detected local network: " + prefix + ".0/24");
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        } catch (Exception e) {
+            Logger.error("Error detecting local networks: " + e.getMessage());
+        }
+        
+        // Always add localhost as fallback
+        if (!networkPrefixes.contains("127.0.0")) {
+            networkPrefixes.add("127.0.0");
+        }
+        
+        return networkPrefixes;
+    }
 
     public static void main(String[] args) {
         // Ask user for wallet name and network port before starting the node
@@ -46,7 +105,7 @@ public class startBlockchain {
                     int p = Integer.parseInt(portLine.trim());
                     if (p >= 1 && p <= 65535) {
                         chosenPort = p;
-                        // apply to NetworkConfig so server thread picks it up
+                        // Apply to NetworkConfig so server thread picks it up
                         p2pblockchain.config.NetworkConfig.setSocketPort(chosenPort);
                     } else {
                         System.out.println("Invalid port range. Using default: " + chosenPort);
@@ -59,19 +118,34 @@ public class startBlockchain {
             Logger.warn("Failed to read startup input, using defaults.");
         }
 
-        Blockchain blockchain = new Blockchain(walletName);
+        Blockchain blockchain = new Blockchain(walletName, chosenPort);
         // Create a local Wallet instance (loads same keypair) for signing TXs
         Wallet wallet = new Wallet(walletName);
+
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+            Logger.log("Shutdown detected, notifying peers...");
+            blockchain.broadcastLeaveNetwork();
+            
+            try { Thread.sleep(500); } catch (InterruptedException e) {}
+            
+            blockchain.closeAllConnections();
+            Logger.log("Graceful shutdown complete.");
+        }));
 
         Thread networkThread = new Thread(() -> { networkServer(blockchain); });
         networkThread.setDaemon(true);
         networkThread.start();
+        
+        // Start broadcast listener thread
+        Thread broadcastThread = new Thread(() -> { broadcastListener(blockchain); });
+        broadcastThread.setDaemon(true);
+        broadcastThread.start();
 
-        // Attendre un peu que le serveur réseau démarre
+        // Wait for network server to be ready
         try { Thread.sleep(1000); } catch (InterruptedException e) {}
 
-        // Tenter de se connecter aux nœuds bootstrap au démarrage
-        discoverAndJoinNetwork(blockchain, chosenPort);
+        // Try to connect to bootstrap nodes on startup
+        discoverAndJoinNetwork(blockchain);
 
         // Start console interface
         Thread consoleThread = new Thread(() -> { runConsole(blockchain, wallet); });
@@ -86,37 +160,54 @@ public class startBlockchain {
     }
 
     /**
-     * Tente de se connecter automatiquement aux nœuds bootstrap pour rejoindre le réseau.
-     * Ignore le nœud local (même port) et tente de cloner la blockchain du premier nœud trouvé.
+     * Scans the network (localhost and/or local LAN) for running P2P nodes.
+     * Ignores the local node (same port) and tries to clone the blockchain from
+     * the first active node found.
+     * 
+     * @param blockchain The local Blockchain instance
      */
-    public static void discoverAndJoinNetwork(Blockchain blockchain, int myPort) {
-        Logger.log("Recherche de nœuds existants sur le réseau...");
-        P2PNode myNode = new P2PNode("localhost", myPort);
-        boolean foundNode = false;
-        P2PNode firstActiveNode = null;
-
-        for (String bootstrapAddress : BOOTSTRAP_NODES) {
-            // Ignorer notre propre port
-            if (bootstrapAddress.contains(":" + myPort)) {
-                continue;
-            }
-
-            try {
-                String[] parts = bootstrapAddress.split(":");
-                String host = parts[0];
-                int port = Integer.parseInt(parts[1]);
+    public static void discoverAndJoinNetwork(Blockchain blockchain) {
+        P2PNode myNode = blockchain.getMyNode();
+        List<P2PNode> discoveredNodes = new ArrayList<>();
+        
+        // Try broadcast discovery first if enabled
+        if (p2pblockchain.config.NetworkConfig.USE_BROADCAST_DISCOVERY) {
+            Logger.log("Broadcasting discovery message to local network...");
+            discoveredNodes = discoverNodesByBroadcast(myNode);
+            
+            if (!discoveredNodes.isEmpty()) {
+                Logger.log("Found " + discoveredNodes.size() + " node(s) via broadcast.");
+            } else {
+                Logger.log("No nodes responded to broadcast.");
                 
-                Logger.log("Tentative de connexion à " + bootstrapAddress + "...");
-
-                // Essayer de se connecter au nœud
-                try (Socket testSocket = new Socket(host, port);
+                // Fallback to network scan if enabled
+                if (p2pblockchain.config.NetworkConfig.SCAN_LOCAL_NETWORK) {
+                    Logger.log("Falling back to network scan...");
+                    discoveredNodes = discoverNodesByScan(myNode);
+                }
+            }
+        } else if (p2pblockchain.config.NetworkConfig.SCAN_LOCAL_NETWORK) {
+            // Broadcast disabled, use network scan directly
+            Logger.log("Using network scan...");
+            discoveredNodes = discoverNodesByScan(myNode);
+        } else {
+            // Both disabled, just check localhost
+            Logger.log("Checking localhost only...");
+            discoveredNodes = discoverNodesByScan(myNode);
+        }
+        
+        // Connect to all discovered nodes
+        P2PNode firstActiveNode = null;
+        for (P2PNode remoteNode : discoveredNodes) {
+            try {
+                try (Socket testSocket = new Socket()) {
+                    testSocket.connect(new java.net.InetSocketAddress(
+                        remoteNode.getNodeAddress(), remoteNode.getNodePort()), 1000);
+                    
                     BufferedWriter out = new BufferedWriter(new OutputStreamWriter(testSocket.getOutputStream()));
-                    BufferedReader in = new BufferedReader(new InputStreamReader(testSocket.getInputStream()))) {
+                    BufferedReader in = new BufferedReader(new InputStreamReader(testSocket.getInputStream()));
                     
-                    // Créer le nœud P2P
-                    P2PNode remoteNode = new P2PNode(host, port);
-                    
-                    // Envoyer une demande de jointure au réseau
+                    // Send a Join Network request
                     out.write(MessageType.JOIN_NETWORK + ", " + myNode.toBase64() + "\n");
                     out.flush();
 
@@ -125,45 +216,339 @@ public class startBlockchain {
                         String response = Base64Utils.decodeToString(responseB64);
                         
                         if ("Ok".equals(response) || "Dup".equals(response)) {
-                            Logger.log("Connecté au nœud " + bootstrapAddress + " (réponse: " + response + ")");
+                            Logger.info("Connected to node " + remoteNode.getNodeAddress() + ":" + 
+                                     remoteNode.getNodePort() + " (response: " + response + ")");
                             blockchain.addP2PNodes(remoteNode);
-                            foundNode = true;
-                            
-                            // Sauvegarder le premier nœud actif pour cloner la blockchain
+
                             if (firstActiveNode == null) {
                                 firstActiveNode = remoteNode;
                             }
-                        } else {
-                            Logger.warn("Nœud " + bootstrapAddress + " a refusé la connexion: " + response);
                         }
                     }
-                } catch (Exception e) {
-                    // Ce nœud n'est pas disponible, continuer avec le suivant
-                    Logger.log("Nœud " + bootstrapAddress + " non disponible.");
+                    
+                    out.close();
+                    in.close();
                 }
             } catch (Exception e) {
-                Logger.warn("Erreur lors de la tentative de connexion à " + bootstrapAddress + ": " + e.getMessage());
+                Logger.warn("Failed to join node " + remoteNode.getNodeAddress() + ":" + 
+                          remoteNode.getNodePort() + " - " + e.getMessage());
+            }
+        }
+        
+        // Clone blockchain from first node if found
+        if (firstActiveNode != null) {
+            Logger.info("Attempting to clone blockchain from " + firstActiveNode.toString() + "...");
+            boolean cloned = blockchain.getBlockchainFrom(firstActiveNode);
+            if (cloned) {
+                Logger.info("Blockchain cloned successfully!");
+            } else {
+                Logger.warn("Failed to clone blockchain.");
+            }
+        } else {
+            Logger.info("No existing nodes found. Starting as the first node in the network.");
+        }
+    }
+    
+    /**
+     * Discover nodes using UDP broadcast.
+     * Sends a broadcast message and waits for responses from other nodes.
+     * 
+     * @param myNode The local node information
+     * @return List of discovered P2P nodes
+     */
+    public static List<P2PNode> discoverNodesByBroadcast(P2PNode myNode) {
+        List<P2PNode> discoveredNodes = new ArrayList<>();
+        
+        try (DatagramSocket socket = new DatagramSocket()) {
+            socket.setBroadcast(true);
+            socket.setSoTimeout(p2pblockchain.config.NetworkConfig.BROADCAST_TIMEOUT_MS);
+            
+            // Prepare broadcast message: "BLOCKCHAIN_DISCOVER:<port>:<responsePort>"
+            // Include a response port so the listener knows where to send the reply
+            int responsePort = socket.getLocalPort();
+            String message = "BLOCKCHAIN_DISCOVER:" + myNode.getNodePort() + ":" + responsePort;
+            byte[] sendData = message.getBytes();
+            
+            // Send broadcast to multiple addresses for better compatibility
+            List<InetAddress> broadcastAddresses = new ArrayList<>();
+            
+            // Add general broadcast
+            broadcastAddresses.add(InetAddress.getByName("255.255.255.255"));
+            
+            // Add subnet-specific broadcasts for all active interfaces
+            try {
+                Enumeration<NetworkInterface> interfaces = NetworkInterface.getNetworkInterfaces();
+                while (interfaces.hasMoreElements()) {
+                    NetworkInterface iface = interfaces.nextElement();
+                    if (iface.isLoopback() || !iface.isUp()) continue;
+                    
+                    for (InterfaceAddress ifaceAddr : iface.getInterfaceAddresses()) {
+                        InetAddress broadcast = ifaceAddr.getBroadcast();
+                        if (broadcast != null && !broadcastAddresses.contains(broadcast)) {
+                            broadcastAddresses.add(broadcast);
+                        }
+                    }
+                }
+            } catch (Exception e) {
+                Logger.warn("Could not enumerate network interfaces: " + e.getMessage());
+            }
+            
+            // Send to all broadcast addresses
+            for (InetAddress broadcastAddr : broadcastAddresses) {
+                try {
+                    DatagramPacket sendPacket = new DatagramPacket(
+                        sendData, sendData.length, broadcastAddr, 
+                        p2pblockchain.config.NetworkConfig.BROADCAST_PORT);
+                    socket.send(sendPacket);
+                    Logger.log("Broadcast sent to " + broadcastAddr.getHostAddress());
+                } catch (Exception e) {
+                    Logger.warn("Failed to broadcast to " + broadcastAddr.getHostAddress() + ": " + e.getMessage());
+                }
+            }
+            
+            Logger.log("Waiting for responses (timeout: " + 
+                p2pblockchain.config.NetworkConfig.BROADCAST_TIMEOUT_MS + "ms)...");
+            
+            // Listen for responses
+            byte[] receiveData = new byte[1024];
+            long startTime = System.currentTimeMillis();
+            
+            while (System.currentTimeMillis() - startTime < p2pblockchain.config.NetworkConfig.BROADCAST_TIMEOUT_MS) {
+                try {
+                    DatagramPacket receivePacket = new DatagramPacket(receiveData, receiveData.length);
+                    socket.receive(receivePacket);
+                    
+                    String response = new String(receivePacket.getData(), 0, receivePacket.getLength());
+                    
+                    // Expected response: "BLOCKCHAIN_NODE:<port>"
+                    if (response.startsWith("BLOCKCHAIN_NODE:")) {
+                        String[] parts = response.split(":");
+                        if (parts.length == 2) {
+                            try {
+                                int port = Integer.parseInt(parts[1].trim());
+                                String address = receivePacket.getAddress().getHostAddress();
+                                
+                                // Don't add ourselves
+                                if (port != myNode.getNodePort() || !address.equals(getLocalIPAddress())) {
+                                    P2PNode node = new P2PNode(address, port);
+                                    discoveredNodes.add(node);
+                                    Logger.log("Discovered node: " + address + ":" + port);
+                                }
+                            } catch (NumberFormatException e) {
+                                Logger.warn("Invalid port in broadcast response: " + response);
+                            }
+                        }
+                    }
+                } catch (SocketTimeoutException e) {
+                    // Timeout reached, stop listening
+                    break;
+                }
+            }
+            
+        } catch (Exception e) {
+            Logger.error("Error during broadcast discovery: " + e.getMessage());
+        }
+        
+        return discoveredNodes;
+    }
+    
+    /**
+     * Legacy network scan method (scans all IPs in local network).
+     * Used as fallback when broadcast discovery fails.
+     * 
+     * @param myNode The local node information
+     * @return List of discovered P2P nodes
+     */
+    public static List<P2PNode> discoverNodesByScan(P2PNode myNode) {
+        List<P2PNode> discoveredNodes = new ArrayList<>();
+        List<String> hostsToScan = new ArrayList<>();
+        
+        // Determine which hosts to scan based on configuration
+        if (p2pblockchain.config.NetworkConfig.SCAN_LOCAL_NETWORK) {
+            Logger.info("Scanning local network for existing nodes...");
+            List<String> networkPrefixes = getLocalNetworkPrefixes();
+            
+            // For each network prefix, add all possible host IPs (1-254)
+            for (String prefix : networkPrefixes) {
+                for (int i = 1; i <= 254; i++) {
+                    hostsToScan.add(prefix + "." + i);
+                }
+            }
+        } else {
+            // Only scan localhost
+            Logger.info("Scanning localhost only...");
+            hostsToScan.add("127.0.0.1");
+        }
+        
+        Logger.log("Scanning " + hostsToScan.size() + " hosts on ports " + 
+                   p2pblockchain.config.NetworkConfig.PORT_SCAN_START + "-" + 
+                   p2pblockchain.config.NetworkConfig.PORT_SCAN_END + "...");
+        
+        int myPort = myNode.getNodePort();
+        String myAddress = getLocalIPAddress();
+        
+        int scannedCount = 0;
+        int totalToScan = hostsToScan.size() * (p2pblockchain.config.NetworkConfig.PORT_SCAN_END - p2pblockchain.config.NetworkConfig.PORT_SCAN_START + 1);
+        
+        for (String host : hostsToScan) {
+            for (int port = p2pblockchain.config.NetworkConfig.PORT_SCAN_START; 
+                 port <= p2pblockchain.config.NetworkConfig.PORT_SCAN_END; port++) {
+                scannedCount++;
+                
+                // Skip self (same port and same IP)
+                if (port == myPort && (host.equals("127.0.0.1") || host.equals("localhost") || host.equals(myAddress))) {
+                    continue;
+                }
+
+                try {
+                    // Try to connect to the node with a short timeout
+                    try (Socket testSocket = new Socket()) {
+                        testSocket.connect(new java.net.InetSocketAddress(host, port), 
+                                         p2pblockchain.config.NetworkConfig.NETWORK_SCAN_TIMEOUT_MS);
+                        
+                        // Node is listening, add it
+                        P2PNode remoteNode = new P2PNode(host, port);
+                        discoveredNodes.add(remoteNode);
+                        Logger.log("Found node at " + host + ":" + port);
+                    } catch (java.net.SocketTimeoutException | java.net.ConnectException e) {
+                        // Port not responding - skip
+                    }
+                } catch (Exception e) {
+                    // Unexpected error - skip
+                }
+                
+                // Progress indicator every 1000 scans
+                if (scannedCount % 1000 == 0) {
+                    Logger.log("Scan progress: " + scannedCount + "/" + totalToScan + " (" + (scannedCount * 100 / totalToScan) + "%)");
+                }
             }
         }
 
-        // Si on a trouvé au moins un nœud, cloner la blockchain
-        if (foundNode && firstActiveNode != null) {
-            Logger.log("Tentative de clonage de la blockchain depuis " + firstActiveNode.toString() + "...");
-            boolean cloned = blockchain.getBlockchainFrom(firstActiveNode);
-            if (cloned) {
-                Logger.log("Blockchain clonée avec succès!");
-            } else {
-                Logger.warn("Échec du clonage de la blockchain.");
+        Logger.log("Network scan complete. Scanned " + scannedCount + " addresses, found " + discoveredNodes.size() + " nodes.");
+        return discoveredNodes;
+    }
+    
+    /**
+     * Listen for UDP broadcast discovery messages and respond with our node info.
+     * This runs continuously in a background thread.
+     * 
+     * @param blockchain The local Blockchain instance
+     */
+    public static void broadcastListener(Blockchain blockchain) {
+        try (DatagramSocket socket = new DatagramSocket(p2pblockchain.config.NetworkConfig.BROADCAST_PORT)) {
+            socket.setBroadcast(true);
+            Logger.log("Broadcast listener started on port " + p2pblockchain.config.NetworkConfig.BROADCAST_PORT);
+            Logger.log("Ready to receive discovery requests from other nodes...");
+            
+            byte[] receiveData = new byte[1024];
+            
+            while (true) {
+                try {
+                    DatagramPacket receivePacket = new DatagramPacket(receiveData, receiveData.length);
+                    socket.receive(receivePacket);
+                    
+                    String message = new String(receivePacket.getData(), 0, receivePacket.getLength());
+                    String senderAddress = receivePacket.getAddress().getHostAddress();
+                    
+                    Logger.log("Received UDP message from " + senderAddress + ": " + message);
+                    
+                    // Check if it's a discovery request: "BLOCKCHAIN_DISCOVER:<port>:<responsePort>"
+                    if (message.startsWith("BLOCKCHAIN_DISCOVER:")) {
+                        String[] parts = message.split(":");
+                        if (parts.length >= 2) {
+                            try {
+                                int senderPort = Integer.parseInt(parts[1].trim());
+                                
+                                // Get response port if provided, otherwise use source port
+                                int responsePort = receivePacket.getPort();
+                                if (parts.length >= 3) {
+                                    try {
+                                        responsePort = Integer.parseInt(parts[2].trim());
+                                    } catch (NumberFormatException e) {
+                                        // Use source port as fallback
+                                    }
+                                }
+                                
+                                // Don't respond to ourselves
+                                P2PNode myNode = blockchain.getMyNode();
+                                String localIP = getLocalIPAddress();
+                                
+                                // Check if it's from ourselves (same IP and port)
+                                if (senderPort == myNode.getNodePort() && 
+                                    (senderAddress.equals(localIP) || senderAddress.equals("127.0.0.1"))) {
+                                    Logger.log("Ignoring own broadcast from " + senderAddress);
+                                    continue;
+                                }
+                                
+                                Logger.log("Received discovery request from " + senderAddress + ":" + senderPort);
+                                
+                                // Respond with our node info: "BLOCKCHAIN_NODE:<port>"
+                                String response = "BLOCKCHAIN_NODE:" + myNode.getNodePort();
+                                byte[] sendData = response.getBytes();
+                                
+                                DatagramPacket sendPacket = new DatagramPacket(
+                                    sendData, sendData.length,
+                                    receivePacket.getAddress(), responsePort);
+                                
+                                socket.send(sendPacket);
+                                Logger.log("Sent discovery response to " + senderAddress + ":" + responsePort);
+                                
+                            } catch (NumberFormatException e) {
+                                Logger.warn("Invalid discovery message format: " + message);
+                            }
+                        }
+                    }
+                } catch (Exception e) {
+                    Logger.error("Error in broadcast listener: " + e.getMessage());
+                }
             }
-        } else {
-            Logger.log("Aucun nœud existant trouvé. Démarrage en tant que premier nœud du réseau.");
+        } catch (Exception e) {
+            Logger.warn("Failed to start broadcast listener: " + e.getMessage());
+            Logger.info("Going back to localhost-only mode.");
         }
+    }
+    
+    /**
+     * Get the local IP address of this machine (non-loopback).
+     * 
+     * @return Local IP address as a string, or "127.0.0.1" if not found
+     */
+    public static String getLocalIPAddress() {
+        try {
+            Enumeration<NetworkInterface> interfaces = NetworkInterface.getNetworkInterfaces();
+            while (interfaces.hasMoreElements()) {
+                NetworkInterface iface = interfaces.nextElement();
+                
+                if (iface.isLoopback() || !iface.isUp()) {
+                    continue;
+                }
+                
+                Enumeration<InetAddress> addresses = iface.getInetAddresses();
+                while (addresses.hasMoreElements()) {
+                    InetAddress addr = addresses.nextElement();
+                    
+                    if (addr instanceof java.net.Inet4Address) {
+                        String ip = addr.getHostAddress();
+                        // Return first non-loopback IPv4 address
+                        if (!ip.startsWith("127.")) {
+                            return ip;
+                        }
+                    }
+                }
+            }
+        } catch (Exception e) {
+            Logger.error("Error getting local IP: " + e.getMessage());
+        }
+        return "127.0.0.1";
     }
 
     /**
      * Simple console REPL to interact with the local blockchain instance.
      * Supports basic commands: help, balance, mybalance, send, start, stop,
      * join, clone, listpeers, quit.
+     * 
+     * @param blockchain The local Blockchain instance
+     * @param wallet The local Wallet instance for signing transactions
      */
     public static void runConsole(Blockchain blockchain, Wallet wallet) {
         try {
@@ -183,7 +568,7 @@ public class startBlockchain {
 
                 switch (cmd) {
                     case "help":
-                        System.out.println("Commands:\n  help\n  balance <address>\n  mybalance\n  send <to> <amount> <fee> [message]\n  start\n  stop\n  join <host:port>\n  clone <host:port>\n  listpeers\n  quit");
+                        System.out.println("Commands:\n  help\n  balance <address>\n  mybalance\n  send <to> <amount> <fee> [message]\n  start\n  stop\n  join <host:port>\n  clone <host:port>\n  listpeers\n  listwallets\n  listblocks\n  quit");
                         break;
 
                     case "balance":
@@ -262,6 +647,37 @@ public class startBlockchain {
                         for (P2PNode p : blockchain.getP2PNodes()) System.out.println(" - " + p.toString());
                         break;
 
+                    case "listwallets":
+                        {
+                            ArrayList<String[]> wallets = blockchain.getAllWalletsFromNetwork();
+                            if (wallets.isEmpty()) {
+                                System.out.println("No wallets found.");
+                            } else {
+                                System.out.println("\n=== Wallets on Network ===");
+                                System.out.println(String.format("%-15s %-80s %15s", "Name", "Address", "Balance"));
+                                System.out.println("-".repeat(112));
+                                for (String[] walletInfo : wallets) {
+                                    String name = walletInfo[0];
+                                    String address = walletInfo[1];
+                                    String balance = walletInfo[2];
+                                    
+                                    // Truncate address if too long for display
+                                    String displayAddress = address.length() > 77 ? 
+                                        address.substring(0, 74) + "..." : address;
+                                    
+                                    System.out.println(String.format("%-15s %-80s %15s", 
+                                        name, displayAddress, balance));
+                                }
+                                System.out.println("-".repeat(112));
+                                System.out.println("Total wallets: " + wallets.size());
+                            }
+                            
+                        }
+                        break;
+                    case "listblocks":
+                        blockchain.listAllBlocks();
+                        break;
+
                     case "send":
                         // send <to> <amount> <fee> [message]
                         if (args.isEmpty()) { System.out.println("Usage: send <to> <amount> <fee> [message]"); break; }
@@ -296,10 +712,20 @@ public class startBlockchain {
         }
     }
     
+    /**
+     * Network server loop to accept incoming P2P connections and handle requests.
+     * 
+     * @param blockchain The local Blockchain instance
+     */
     public static void networkServer(Blockchain blockchain) {
         try {
-            ServerSocket serverSocket = new ServerSocket(p2pblockchain.config.NetworkConfig.socketPort);
-            Logger.log("Network Ready");
+            // Bind to 0.0.0.0 to accept connections from all network interfaces
+            ServerSocket serverSocket = new ServerSocket(
+                p2pblockchain.config.NetworkConfig.socketPort, 
+                50, 
+                InetAddress.getByName("0.0.0.0")
+            );
+            Logger.info("Network Ready on " + serverSocket.getLocalSocketAddress());
             while (true) {
                 Socket clientSocket = serverSocket.accept();
                 Thread clientThread = new Thread(
@@ -315,6 +741,12 @@ public class startBlockchain {
         }
     }
 
+    /**
+     * Handles an individual client connection for P2P requests.
+     * 
+     * @param clientSocket The connected client socket
+     * @param blockchain The local Blockchain instance
+     */
     public static void clientHandler(Socket clientSocket, Blockchain blockchain) {
         try {
             BufferedReader socketInput = new BufferedReader(new InputStreamReader(clientSocket.getInputStream()));
@@ -372,6 +804,13 @@ public class startBlockchain {
                         }
                         socketOutput.flush();
                     
+                    } else if (request.contentEquals(MessageType.LEAVE_NETWORK)) {
+                        P2PNode leavingNode = new P2PNode(messageElements[1]);
+                        blockchain.removeP2PNode(leavingNode);
+                        socketOutput.write(Base64Utils.encodeToString("Bye") + "\n");
+                        socketOutput.flush();
+                        Logger.info("Node " + leavingNode.toString() + " has left the network.");
+
                     } else if (request.contentEquals(MessageType.BCAST_BLOCK)) {
                         // receive: broadcastedBlock, b64(block.toBase64)
                         // returns: b64(Ok), b64(Duplicate)
@@ -420,6 +859,21 @@ public class startBlockchain {
                         socketOutput.flush();
                     } else if (receivedMessage.contentEquals(MessageType.CLONE_CHAIN)) {
                         socketOutput.write(blockchain.toBase64ForExchange() + "\n");
+                        socketOutput.flush();
+                    } else if (receivedMessage.contentEquals(MessageType.GET_LOCAL_WALLETS)) {
+                        // Get local wallets and return as JSON array
+                        ArrayList<String[]> localWallets = blockchain.getAllWalletsWithBalances();
+                        p2pblockchain.utils.JsonArray walletsArray = new p2pblockchain.utils.JsonArray();
+                        
+                        for (String[] walletInfo : localWallets) {
+                            p2pblockchain.utils.JsonObject walletObj = new p2pblockchain.utils.JsonObject();
+                            walletObj.put("name", walletInfo[0]);
+                            walletObj.put("address", walletInfo[1]);
+                            walletObj.put("balance", walletInfo[2]);
+                            walletsArray.add(walletObj);
+                        }
+                        
+                        socketOutput.write(Base64Utils.encodeToString(walletsArray.toString()) + "\n");
                         socketOutput.flush();
                     } else {
                         Logger.error("Unrecognized command: " + receivedMessage);
