@@ -15,7 +15,7 @@ public class NetworkConfig {
     // Network discovery settings
     public static final boolean USE_BROADCAST_DISCOVERY = true;
     public static final int BROADCAST_PORT = 8299;
-    public static final int BROADCAST_TIMEOUT_MS = 3000;
+    public static final int BROADCAST_TIMEOUT_MS = 5000; // Increased to 5 seconds for WiFi networks
 
     // Fallback: scan local network if broadcast fails
     public static final boolean SCAN_LOCAL_NETWORK = false; 

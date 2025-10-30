@@ -7,6 +7,7 @@ import java.io.OutputStreamWriter;
 import java.net.DatagramPacket;
 import java.net.DatagramSocket;
 import java.net.InetAddress;
+import java.net.InterfaceAddress;
 import java.net.NetworkInterface;
 import java.net.ServerSocket;
 import java.net.Socket;
@@ -262,18 +263,51 @@ public class startBlockchain {
             socket.setBroadcast(true);
             socket.setSoTimeout(p2pblockchain.config.NetworkConfig.BROADCAST_TIMEOUT_MS);
             
-            // Prepare broadcast message: "BLOCKCHAIN_DISCOVER:<port>"
-            String message = "BLOCKCHAIN_DISCOVER:" + myNode.getNodePort();
+            // Prepare broadcast message: "BLOCKCHAIN_DISCOVER:<port>:<responsePort>"
+            // Include a response port so the listener knows where to send the reply
+            int responsePort = socket.getLocalPort();
+            String message = "BLOCKCHAIN_DISCOVER:" + myNode.getNodePort() + ":" + responsePort;
             byte[] sendData = message.getBytes();
             
-            // Send broadcast to all network interfaces
-            InetAddress broadcastAddr = InetAddress.getByName("255.255.255.255");
-            DatagramPacket sendPacket = new DatagramPacket(
-                sendData, sendData.length, broadcastAddr, 
-                p2pblockchain.config.NetworkConfig.BROADCAST_PORT);
+            // Send broadcast to multiple addresses for better compatibility
+            List<InetAddress> broadcastAddresses = new ArrayList<>();
             
-            socket.send(sendPacket);
-            Logger.log("Broadcast sent, waiting for responses...");
+            // Add general broadcast
+            broadcastAddresses.add(InetAddress.getByName("255.255.255.255"));
+            
+            // Add subnet-specific broadcasts for all active interfaces
+            try {
+                Enumeration<NetworkInterface> interfaces = NetworkInterface.getNetworkInterfaces();
+                while (interfaces.hasMoreElements()) {
+                    NetworkInterface iface = interfaces.nextElement();
+                    if (iface.isLoopback() || !iface.isUp()) continue;
+                    
+                    for (InterfaceAddress ifaceAddr : iface.getInterfaceAddresses()) {
+                        InetAddress broadcast = ifaceAddr.getBroadcast();
+                        if (broadcast != null && !broadcastAddresses.contains(broadcast)) {
+                            broadcastAddresses.add(broadcast);
+                        }
+                    }
+                }
+            } catch (Exception e) {
+                Logger.warn("Could not enumerate network interfaces: " + e.getMessage());
+            }
+            
+            // Send to all broadcast addresses
+            for (InetAddress broadcastAddr : broadcastAddresses) {
+                try {
+                    DatagramPacket sendPacket = new DatagramPacket(
+                        sendData, sendData.length, broadcastAddr, 
+                        p2pblockchain.config.NetworkConfig.BROADCAST_PORT);
+                    socket.send(sendPacket);
+                    Logger.log("Broadcast sent to " + broadcastAddr.getHostAddress());
+                } catch (Exception e) {
+                    Logger.warn("Failed to broadcast to " + broadcastAddr.getHostAddress() + ": " + e.getMessage());
+                }
+            }
+            
+            Logger.log("Waiting for responses (timeout: " + 
+                p2pblockchain.config.NetworkConfig.BROADCAST_TIMEOUT_MS + "ms)...");
             
             // Listen for responses
             byte[] receiveData = new byte[1024];
@@ -404,6 +438,7 @@ public class startBlockchain {
         try (DatagramSocket socket = new DatagramSocket(p2pblockchain.config.NetworkConfig.BROADCAST_PORT)) {
             socket.setBroadcast(true);
             Logger.log("Broadcast listener started on port " + p2pblockchain.config.NetworkConfig.BROADCAST_PORT);
+            Logger.log("Ready to receive discovery requests from other nodes...");
             
             byte[] receiveData = new byte[1024];
             
@@ -413,18 +448,36 @@ public class startBlockchain {
                     socket.receive(receivePacket);
                     
                     String message = new String(receivePacket.getData(), 0, receivePacket.getLength());
+                    String senderAddress = receivePacket.getAddress().getHostAddress();
                     
-                    // Check if it's a discovery request: "BLOCKCHAIN_DISCOVER:<port>"
+                    Logger.log("Received UDP message from " + senderAddress + ": " + message);
+                    
+                    // Check if it's a discovery request: "BLOCKCHAIN_DISCOVER:<port>:<responsePort>"
                     if (message.startsWith("BLOCKCHAIN_DISCOVER:")) {
                         String[] parts = message.split(":");
-                        if (parts.length == 2) {
+                        if (parts.length >= 2) {
                             try {
                                 int senderPort = Integer.parseInt(parts[1].trim());
                                 String senderAddress = receivePacket.getAddress().getHostAddress();
                                 
+                                // Get response port if provided, otherwise use source port
+                                int responsePort = receivePacket.getPort();
+                                if (parts.length >= 3) {
+                                    try {
+                                        responsePort = Integer.parseInt(parts[2].trim());
+                                    } catch (NumberFormatException e) {
+                                        // Use source port as fallback
+                                    }
+                                }
+                                
                                 // Don't respond to ourselves
                                 P2PNode myNode = blockchain.getMyNode();
-                                if (senderPort == myNode.getNodePort() && senderAddress.equals(getLocalIPAddress())) {
+                                String localIP = getLocalIPAddress();
+                                
+                                // Check if it's from ourselves (same IP and port)
+                                if (senderPort == myNode.getNodePort() && 
+                                    (senderAddress.equals(localIP) || senderAddress.equals("127.0.0.1"))) {
+                                    Logger.log("Ignoring own broadcast from " + senderAddress);
                                     continue;
                                 }
                                 
@@ -436,10 +489,10 @@ public class startBlockchain {
                                 
                                 DatagramPacket sendPacket = new DatagramPacket(
                                     sendData, sendData.length,
-                                    receivePacket.getAddress(), receivePacket.getPort());
+                                    receivePacket.getAddress(), responsePort);
                                 
                                 socket.send(sendPacket);
-                                Logger.log("Sent discovery response to " + senderAddress);
+                                Logger.log("Sent discovery response to " + senderAddress + ":" + responsePort);
                                 
                             } catch (NumberFormatException e) {
                                 Logger.warn("Invalid discovery message format: " + message);
