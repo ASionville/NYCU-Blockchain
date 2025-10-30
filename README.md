@@ -6,10 +6,14 @@ A simple blockchain implementation for the course "Blockchain and Smart Contract
 - [Overview](#overview)
 - [Features](#features)
 - [Architecture](#architecture)
+  - [Core Components](#core-components)
+  - [Network Protocol](#network-protocol)
 - [Getting Started](#getting-started)
   - [Prerequisites](#prerequisites)
   - [Installation](#installation)
   - [Running a Node](#running-a-node)
+    - [LAN Setup](#lan-setup)
+    - [Localhost Setup](#localhost-setup)
 - [Usage](#usage)
   - [Console Commands](#console-commands)
   - [Creating Transactions](#creating-transactions)
@@ -250,6 +254,14 @@ Key configuration files:
 - Block reward
 - Genesis block parameters
 
+#### Verbosity Level
+To be adjusted in the `BlockchainConfig.java` file:
+- `0`: No logging at all
+- `1`: Errors only
+- `2`: Warnings and errors
+- `3`: Info, warnings, and errors
+- `4`: Debug, info, warnings, and errors (very verbose)
+
 ### NetworkConfig.java
 - Default port: `8300`
 - Broadcast port: `8299`
@@ -261,13 +273,6 @@ Key configuration files:
 - Hash algorithm: `SHA3-256`
 - Signature algorithm: `SHA256withECDSA`
 
-### Verbosity Level
-To be adjusted in the `BlockchainConfig.java` file:
-- `0`: No logging at all
-- `1`: Errors only
-- `2`: Warnings and errors
-- `3`: Info, warnings, and errors
-- `4`: Debug, info, warnings, and errors (very verbose)
 
 ## Security
 
