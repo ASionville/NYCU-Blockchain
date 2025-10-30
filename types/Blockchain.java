@@ -612,7 +612,7 @@ public class Blockchain {
         if (this.p2pNodes.contains(newNode)) {
             return false;
         }
-        System.out.println("yolo");
+
         if (newNode == null) {
             Logger.error("Cannot add P2P node with null socket: " + newNode.toString());
             return false;
