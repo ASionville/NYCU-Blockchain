@@ -81,7 +81,7 @@ public class startBlockchain {
         try { Thread.sleep(1000); } catch (InterruptedException e) {}
 
         // Try to connect to bootstrap nodes on startup
-        discoverAndJoinNetwork(blockchain, chosenPort);
+        discoverAndJoinNetwork(blockchain);
 
         // Start console interface
         Thread consoleThread = new Thread(() -> { runConsole(blockchain, wallet); });
@@ -100,15 +100,15 @@ public class startBlockchain {
      * Ignores the local node (same port) and tries to clone the blockchain from
      * the first active node found.
      */
-    public static void discoverAndJoinNetwork(Blockchain blockchain, int myPort) {
+    public static void discoverAndJoinNetwork(Blockchain blockchain) {
         Logger.log("Looking for existing nodes to join...");
-        P2PNode myNode = new P2PNode("localhost", myPort);
+        P2PNode myNode = blockchain.getMyNode();
         boolean foundNode = false;
         P2PNode firstActiveNode = null;
 
         for (String bootstrapAddress : BOOTSTRAP_NODES) {
             // Skip self
-            if (bootstrapAddress.contains(":" + myPort)) {
+            if (bootstrapAddress.contains(":" + myNode.getNodePort())) {
                 continue;
             }
 
