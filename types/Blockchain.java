@@ -178,7 +178,7 @@ public class Blockchain {
         if (!this.mining) {
             return;
         }
-        if (pendingTransactions.isEmpty()) {
+        if (pendingTransactions.isEmpty() && !chain.isEmpty()) {
             Logger.log("No pending transactions to include in the new block. Skipping mining.");
             return;
         }
