@@ -210,15 +210,17 @@ public class Blockchain {
 
         Instant endTime = Instant.now();
         Logger.log("Hash found: " + newBlock.getHash() + " (Difficulty: " + difficulty + ", Time taken: " + Duration.between(startTime, endTime).toMillis() + " ms)");
-        
+
         // Check block in case another block is added while mining
         if (!chain.isEmpty()) {
             Block lastBlock = chain.getLast();
             if (!newBlock.getPreviousHash().equals(lastBlock.getHash())) {
-                // Compare blocks content
-                // If the new transactions are already included in the last block, discard the mined block
+                Logger.warn("Conflict detected: Chain advanced while mining. Mined block is now orphaned.");
+                // CONFLICT: Chain advanced while mining. This block is now orphaned.
+                // Strategy: find unique transactions and return them to pending pool.
                 ArrayList<Transaction> newBlockTransactions = newBlock.getTransactions();
-
+                
+                // Find the common ancestor block
                 int differentFrom = 0;
                 for (int i = 0; i < this.chain.size(); i++) {
                     if (this.chain.get(i).getHash().contentEquals(newBlock.getPreviousHash())) {
@@ -226,22 +228,24 @@ public class Blockchain {
                     }
                 }
 
+                // Remove transactions already included in blocks added after fork point
                 for (int i = differentFrom; i < this.chain.size(); i++) {
                     Block duringBlock = chain.get(i);
                     for (Transaction transactionInDuringBlock : duringBlock.getTransactions()) {
                         for (Transaction transactionInNewBlock : newBlockTransactions) {
                             if (transactionInDuringBlock.toHash().contentEquals(transactionInNewBlock.toHash())) {
                                 newBlockTransactions.remove(transactionInNewBlock);
-                                Logger.log("Mined block contains transactions already included in the chain. Discarding mined block.");
+                                Logger.log("Transaction already included in chain after fork point, not returning to pending pool: " + transactionInNewBlock.toString());
                             }
                         }
                     }
                 }
 
-                // If there are still new transactions, add them back
+                // Return remaining unique transactions to pending pool for re-mining
                 if (!newBlockTransactions.isEmpty()) {
                     for (Transaction transactionInNewBlock : newBlockTransactions) {
                         this.pendingTransactions.addLast(transactionInNewBlock);
+                        Logger.log("Returning unique transaction from orphaned block to pending pool: " + transactionInNewBlock.toString());
                     }
                 }
 
