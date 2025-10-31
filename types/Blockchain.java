@@ -215,7 +215,7 @@ public class Blockchain {
         if (!chain.isEmpty()) {
             Block lastBlock = chain.getLast();
             if (!newBlock.getPreviousHash().equals(lastBlock.getHash())) {
-                logger.warn("Conflict detected: Chain advanced while mining. Mined block is now orphaned.");
+                Logger.warn("Conflict detected: Chain advanced while mining. Mined block is now orphaned.");
                 // CONFLICT: Chain advanced while mining. This block is now orphaned.
                 // Strategy: find unique transactions and return them to pending pool.
                 ArrayList<Transaction> newBlockTransactions = newBlock.getTransactions();
